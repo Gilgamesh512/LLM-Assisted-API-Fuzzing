@@ -73,6 +73,16 @@ def normalize_finding(finding: dict[str, Any], sequence: int = 1) -> dict[str, A
         "evidence": evidence,
         "reproduction": reproduction,
         "recommendation": str(finding.get("recommendation") or _recommendation(vulnerability)),
+        "source_engine": str(finding.get("source_engine") or finding.get("tool") or finding.get("source") or "unknown"),
+        "payload_source": str(
+            finding.get("payload_source")
+            or ("llm" if finding.get("llm_generated") else "unknown")
+        ),
+        "baseline_status": str(finding.get("baseline_status") or "unknown"),
+        "confirmation_method": str(
+            finding.get("confirmation_method")
+            or ("runtime" if finding.get("confirmed") else "unconfirmed")
+        ),
     }
 
 

@@ -270,6 +270,35 @@ Không coi mọi response lỗi là vulnerability confirmed:
 - GraphQL error không tự động là lỗ hổng.
 - CVE match chỉ là thông tin ngữ cảnh, không chứng minh khai thác thành công.
 
+## Research evaluation
+
+Để so sánh công bằng, mỗi treatment phải dùng cùng target, endpoint set, timeout,
+số lần chạy và seed. Protocol khuyến nghị:
+
+| Treatment | Generator | Validation | Feedback |
+|---|---|---:|---:|
+| B0 | Schemathesis default | No | No |
+| B1 | Schemathesis + handcrafted payload | No | No |
+| P0 | LLM | No | No |
+| P1 | LLM | Yes | No |
+| P2 | LLM | Yes | Yes |
+
+Mỗi run cần lưu model/provider, prompt version, temperature, schema hash, token
+usage, repair count, runtime, payload artifact và findings artifact. Tạo một
+manifest JSON, trong đó mỗi phần tử `runs` trỏ tới một file payload JSON/NDJSON
+và một file findings JSON/NDJSON, rồi chạy:
+
+```bash
+python scripts/evaluate_experiment.py path/to/experiment_manifest.json \
+  --output results/experiment_metrics.json
+```
+
+Evaluator xuất các metric `valid_payload_rate`, `executability_rate`,
+`unique_payload_rate`, `confirmed_findings`, `detection_rate`,
+`false_positive_rate`, `runtime_seconds`, `llm_cost_usd` và attribution theo
+source engine/payload source. `confirmed` chỉ được tính khi finding có xác nhận;
+candidate bị bác bỏ phải ghi `confirmation_status: "rejected"` để đo false positive.
+
 ## Testing
 
 ```bash

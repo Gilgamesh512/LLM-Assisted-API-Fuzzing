@@ -37,6 +37,10 @@ UNIFIED_FIELDS = [
     "confidence",
     "reproduction",
     "recommendation",
+    "source_engine",
+    "payload_source",
+    "baseline_status",
+    "confirmation_method",
 ]
 
 
