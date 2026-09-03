@@ -1,189 +1,296 @@
-# LLM-API-Fuzzer — Kiểm thử bảo mật API REST bằng fuzzing có LLM hỗ trợ
+# LLM-API-Fuzzer
 
-## 1. Kiến trúc & luồng chạy
+Pipeline nghiên cứu kiểm thử bảo mật API bằng fuzzing có LLM hỗ trợ. Hệ thống
+đọc OpenAPI/Swagger hoặc GraphQL introspection, sinh test case context-aware,
+validate output, chạy fuzzing trên các ứng dụng lab cố ý có lỗ hổng và tổng hợp
+kết quả.
 
+Phạm vi benchmark hiện tại gồm **VAmPI**, **crAPI** và **DVGA** chạy cục bộ.
+Chỉ sử dụng pipeline với hệ thống bạn sở hữu hoặc được phép kiểm thử.
+
+## Pipeline
+
+```text
+Target lab (Docker)
+    |
+    +--> VAmPI REST :5002
+    +--> crAPI REST :8888
+    +--> DVGA GraphQL :5013
+             |
+             v
+Authentication + schema discovery
+    |
+    +--> Schemathesis/run_auth.py  -> tokens.env
+    +--> Schemathesis/run_dvga.py  -> DVGA token + dvga_schema.json
+             |
+             v
+Payload generation
+    |
+    +--> scripts/gen_payloads.py
+    |       +--> payload_rest.json
+    |       +--> payload_crapi.json
+    |       +--> payload_graphql.json
+    |       +--> Nuclei/executor/benchmark/suite.json
+    |
+    +--> scripts/run_pipeline.py
+            +--> OpenAPI analyzer
+            +--> api-payload-generator skill
+            +--> Pydantic validator + repair loop
+             |
+             v
+Security testing
+    |
+    +--> Schemathesis REST + GraphQL
+    +--> Nuclei API executor
+             |
+             v
+Results
+    +--> scripts/aggregate_results.py
+            +--> results/findings_summary.csv
+            +--> results/findings_summary.ndjson
 ```
-        A. TARGET LAB (Docker)              B. SINH PAYLOAD (LLM)            C. FUZZING              TỔNG HỢP
-   ┌────────────────────────────┐   ┌──────────────────────────────┐  ┌───────────────────┐  ┌────────────────────┐
-   │ VAmPI  :5002 (REST)        │   │ core/analyzer.py  (đọc spec)  │  │ Schemathesis      │  │ scripts/           │
-   │ crAPI  :8888 (REST)        │◄──┤ core/gemini_client.py (LLM)   ├─►│  (REST + GraphQL) ├─►│  aggregate_results │
-   │ DVGA   :5013 (GraphQL)     │   │ scripts/gen_payloads.py       │  │ Nuclei (template) │  │  -> 1 báo cáo gộp  │
-   └────────────────────────────┘   │  -> 4 file payload đúng format│  └───────────────────┘  └────────────────────┘
-     lab/lab.sh up                   └──────────────────────────────┘
+
+## Targets
+
+| Target | Protocol | Base URL | Fuzzing component |
+|---|---|---|---|
+| VAmPI | REST | `http://localhost:5002` | Schemathesis |
+| crAPI | REST | `http://localhost:8888` | Schemathesis |
+| DVGA | GraphQL | `http://localhost:5013/graphql` | Schemathesis GraphQL |
+| VAmPI | REST | `http://localhost:5002` | Nuclei |
+
+Target configuration nằm trong [`config/targets.yaml`](config/targets.yaml).
+Các spec benchmark được lưu trong `dataset/` và `Schemathesis/`.
+
+## Cấu trúc thư mục
+
+```text
+LLM Assisted API Fuzzing/
+├── core/
+│   ├── analyzer.py          # Parse OpenAPI/Swagger
+│   ├── validator.py         # Validate payload LLM bằng Pydantic
+│   ├── gemini_client.py     # Gemini provider
+│   ├── deepseek_client.py   # DeepSeek provider
+│   └── feedback_loop.py     # Feedback từ runtime
+├── scripts/
+│   ├── run_pipeline.py      # B1 -> B4 trong một lệnh
+│   ├── gen_payloads.py      # Sinh payload cho Schemathesis/Nuclei
+│   ├── aggregate_results.py # Chuẩn hóa và gộp findings
+│   └── switch_ai.py         # Chuyển provider LLM
+├── Schemathesis/            # REST/GraphQL fuzzing runners
+├── Nuclei/executor/         # Nuclei API executor
+├── lab/                     # Docker Compose cho ba target
+├── dataset/                 # Spec, inventory và benchmark data
+├── baseline/                # Kết quả baseline
+├── results/                 # Findings và runtime artifacts
+├── tests/                   # Unit/integration tests
+├── docs/                    # Usage, reports và evidence
+└── Aegis Agent/             # Source DeepCode CLI, tùy chọn cho B2/B3
 ```
 
-**4 file payload** (B sinh, C ăn vào) — đúng và chỉ 4 file này:
+`tokens.env`, `context.json`, `dvga_schema.json` và dữ liệu trong `results/` là
+artifact runtime. Không commit token hoặc response có dữ liệu nhạy cảm.
 
-| File | Target | Tool đọc |
-|---|---|---|
-| `Schemathesis/payload_rest.json` | VAmPI | Schemathesis REST |
-| `Schemathesis/payload_crapi.json` | crAPI | Schemathesis REST |
-| `Schemathesis/payload_graphql.json` | DVGA | Schemathesis GraphQL |
-| `Nuclei/executor/benchmark/suite.json` | VAmPI | Nuclei |
+## Requirements
 
----
+- Python **3.11-3.13**. Python 3.14 hiện chưa được hỗ trợ ổn định bởi một số
+  dependency của Schemathesis/Pydantic.
+- Docker và Docker Compose plugin để chạy target lab.
+- `nuclei` binary trong `PATH` nếu chạy Nuclei.
+- Node.js và DeepCode CLI nếu dùng `scripts/run_pipeline.py`.
+- Gemini API key hoặc cấu hình DeepSeek. Không lưu API key trong repository.
 
-## 2. Yêu cầu môi trường
-
-| Thành phần | Ghi chú |
-|---|---|
-| **OS** | **Linux khuyến nghị** (target lab là Docker Linux; script auth/lab viết cho bash) |
-| **Python** | **3.11 – 3.13**. KHÔNG dùng 3.14 (schemathesis/pydantic-core chưa có wheel cho 3.14) |
-| **Docker** + compose plugin | Chỉ để chạy target lab. Bản thân fuzzer không cần Docker |
-| **nuclei binary** | Tải từ https://github.com/projectdiscovery/nuclei/releases, đưa vào PATH |
-| **Gemini API key** | Đặt trong `.env` (xem dưới). Provider đổi được sang DeepSeek qua `scripts/switch_ai.py` |
-
----
-
-## 3. Cài đặt
+Cài dependency Python:
 
 ```bash
-git clone <repo> && cd LLM-API-Fuzzer-main
-
-# 3.1 API key — .env KHÔNG theo git, phải tạo lại mỗi máy
-echo 'GEMINI_API_KEY=<key-cua-ban>' > .env
-
-# 3.2 Python deps (gộp cả B và C)
-pip install -r requirements.txt                 # pydantic, pyyaml, requests, pytest
-pip install -r Schemathesis/requirements.txt    # schemathesis, httpx 
-
-# 3.3 nuclei binary (Linux) — ví dụ:
-#   wget .../nuclei_x.y.z_linux_amd64.zip && unzip && sudo mv nuclei /usr/local/bin/
-nuclei -version
+python -m pip install -r requirements.txt
+python -m pip install -r Schemathesis/requirements.txt
 ```
 
----
+Trên Windows, có thể chạy các script Python bằng PowerShell như trên. `lab.sh`
+là script Bash; dùng WSL/Git Bash hoặc chạy Docker Compose tương đương trong
+[`lab/docker-compose.yml`](lab/docker-compose.yml) và compose file của crAPI.
 
-## 4. Chạy đầy đủ từ đầu đến cuối
+## Quick start
+
+### 1. Start target lab
+
+Linux, WSL hoặc Git Bash:
 
 ```bash
-# BƯỚC A — dựng 3 target (kéo image, init DB VAmPI, tự tải compose crAPI)
 bash lab/lab.sh up
-bash lab/lab.sh status         
+bash lab/lab.sh status
+```
 
-# BƯỚC B — LLM sinh 4 file payload đúng định dạng
+Các target được expose ở port `5002`, `8888` và `5013`. Xem thêm
+[`lab/README.md`](lab/README.md).
+
+### 2. Generate payloads
+
+Tạo `.env` ở project root nếu dùng Gemini:
+
+```bash
+echo 'GEMINI_API_KEY=<your-key>' > .env
+```
+
+Sinh và validate bốn nhóm output cho benchmark:
+
+```bash
 python scripts/gen_payloads.py
+```
 
-# Lấy token xác thực từ target đang chạy (-> Schemathesis/tokens.env)
+Có thể giới hạn nhóm hoặc target:
+
+```bash
+python scripts/gen_payloads.py --only rest
+python scripts/gen_payloads.py --only graphql
+python scripts/gen_payloads.py --target vampi
+python scripts/gen_payloads.py --max-endpoints 30
+```
+
+### 3. Obtain authentication and schema
+
+```bash
 python Schemathesis/run_auth.py
 python Schemathesis/run_dvga.py
+```
 
-# BƯỚC C1 — Schemathesis (REST vampi+crapi, GraphQL dvga)
+Hai lệnh này tạo/cập nhật `tokens.env`; bước DVGA còn tạo
+`Schemathesis/dvga_schema.json` hoặc artifact schema theo cấu hình runner.
+
+### 4. Run fuzzing
+
+```bash
 python Schemathesis/run_security_tests.py
+```
 
-# BƯỚC C2 — Nuclei (dùng suite.json B vừa sinh; JWT= inject token thật cho endpoint auth)
+Chạy Nuclei từ đúng thư mục executor:
+
+```bash
 cd Nuclei/executor
-JWT="$(grep VAMPI_AUTH_HEADER ../../Schemathesis/tokens.env | cut -d= -f2- | tr -d '\"' | sed 's/^Bearer //')" \
-  python -m executor.run_nuclei --input benchmark/suite.json --export-dir ../../results/nuclei
+python -m executor.run_nuclei \
+  --input benchmark/suite.json \
+  --export-dir ../../results/nuclei
 cd ../..
+```
 
-# TỔNG HỢP — gộp kết quả 2 tool thành 1 báo cáo
+### 5. Aggregate results
+
+```bash
 python scripts/aggregate_results.py
+```
 
-# DỌN LAB khi xong
+Output chính:
+
+```text
+results/findings_summary.csv    # Dùng để đọc/phân tích bằng Excel
+results/findings_summary.ndjson # Dùng cho xử lý tự động
+```
+
+## Run the LLM pipeline
+
+Để chạy riêng Task B từ spec đến payload đã validate:
+
+```bash
+python scripts/run_pipeline.py path/to/openapi.yaml
+python scripts/run_pipeline.py path/to/openapi.yaml \
+  --provider gemini \
+  --output payloads_validated.json
+```
+
+Pipeline thực hiện:
+
+1. Parse spec bằng `core/analyzer.py` thành `context.json`.
+2. Gọi skill built-in `api-payload-generator` qua DeepCode.
+3. Validate JSON bằng `core/validator.py`.
+4. Tự sửa output tối đa `MAX_REPAIR_ATTEMPTS` lần.
+5. Ghi danh sách payload hợp lệ cho fuzzing engine.
+
+DeepCode CLI được build từ source trong `Aegis Agent/`. Cài/build khi cần:
+
+```bash
+cd "Aegis Agent"
+npm install
+npm run build
+cd ..
+```
+
+Xem hướng dẫn chi tiết về Task B trong [`docs/USAGE.md`](docs/USAGE.md).
+
+## Run individual fuzzers
+
+REST runner nhận spec, payload corpus, rules và thư mục kết quả:
+
+```bash
+python Schemathesis/run_schemathesis1.py \
+  --targets "vampi=Schemathesis/vampi_spec.yaml" \
+  --base-urls "vampi=http://localhost:5002" \
+  --payloads Schemathesis/payload_rest.json \
+  --rules Schemathesis/rules.json \
+  --results-dir Schemathesis/results
+```
+
+Chạy riêng DVGA GraphQL:
+
+```bash
+python Schemathesis/run_graphql_fuzz1.py \
+  --base-url http://localhost:5013 \
+  --payloads Schemathesis/payload_graphql.json \
+  --rules Schemathesis/rules.json \
+  --results-dir Schemathesis/results
+```
+
+Authentication được truyền qua `tokens.env` trong flow chuẩn hoặc qua
+`FUZZ_AUTH_HEADER`/tùy chọn `--auth-header` tùy runner.
+
+## Rules and feedback
+
+Rules kiểm thử dùng chung được lưu tại [`Schemathesis/rules.json`](Schemathesis/rules.json).
+Feedback runtime có thể được dùng để cải thiện thế hệ payload tiếp theo:
+
+```bash
+python scripts/run_feedback_loop.py
+```
+
+Các tín hiệu từ response hoặc CVE là context cho test case, không phải bằng
+chứng độc lập rằng target có lỗ hổng. Finding chỉ nên được xem là confirmed khi
+có evidence runtime phù hợp.
+
+## Results and confirmation
+
+Pipeline lưu kết quả chi tiết của Schemathesis trong `Schemathesis/results/`
+và kết quả Nuclei trong `results/nuclei/`, sau đó chuẩn hóa vào `results/`.
+Finding thường gồm target, endpoint, method, attack type, OWASP category,
+payload, status code, response time, evidence, severity và trạng thái xác nhận.
+
+Không coi mọi response lỗi là vulnerability confirmed:
+
+- HTTP `5xx` là tín hiệu mạnh nhưng vẫn cần xem evidence.
+- Chuỗi chung như `error`, `exception` hoặc `debug` không đủ để kết luận.
+- GraphQL error không tự động là lỗ hổng.
+- CVE match chỉ là thông tin ngữ cảnh, không chứng minh khai thác thành công.
+
+## Testing
+
+```bash
+python -m pytest tests/ -v
+```
+
+## Security notes
+
+- Chỉ chạy fuzzing với VAmPI, crAPI, DVGA hoặc target có ủy quyền rõ ràng.
+- Không commit `.env`, `tokens.env`, API key hoặc output chứa dữ liệu nhạy cảm.
+- Giữ token ở user-level settings khi dùng DeepCode/DeepSeek; không đưa key vào
+  source code hay project config commit lên git.
+- Dừng lab sau khi hoàn thành:
+
+```bash
 bash lab/lab.sh down
 ```
 
-**Kết quả cuối** trong `results/`:
-- `findings_summary.csv` — cho **người** (mở Excel).
-- `findings_summary.ndjson` — cho **máy** (mỗi dòng 1 finding chuẩn hóa).
+## References
 
----
-
-## 5. Chi tiết từng thành phần
-
-### B — `scripts/gen_payloads.py`
-Đọc spec → LLM sinh payload context-aware → validate bằng chính pydantic model của tool → ghi 4 file.
-```bash
-python scripts/gen_payloads.py                  # cả 4 file
-python scripts/gen_payloads.py --only rest      # chỉ vampi + crapi
-python scripts/gen_payloads.py --only graphql   # chỉ dvga
-python scripts/gen_payloads.py --only nuclei    # chỉ suite nuclei
-python scripts/gen_payloads.py --max-endpoints 30
-```
-Đổi provider LLM: `python scripts/switch_ai.py gemini|deepseek|status`.
-
-### C — Schemathesis
-Chạy gộp cả 3 target: `python Schemathesis/run_security_tests.py` (đọc `tokens.env` cho auth).
-Chạy lẻ từng target: xem `Schemathesis/RUNBOOK.md`. Ghi ra `Schemathesis/results/vulnerabilities.{csv,ndjson}`.
-
-### C — Nuclei
-`python -m executor.run_nuclei --input benchmark/suite.json --export-dir <dir>` (chạy trong `Nuclei/executor/`).
-Endpoint auth trong suite dùng placeholder `{{jwt}}` — truyền token thật qua biến môi trường `JWT`.
-
-### Tổng hợp — `scripts/aggregate_results.py`
-Tự dò kết quả 2 tool, chuẩn hóa, khử trùng lặp. Cờ: `--only-confirmed`, `--no-dedup`, `--input <file>`, `--out-dir <dir>`.
-
----
-
-## 5b. Nhắm 1 target TÙY Ý (ngoài 3 lab mẫu)
-
-> ⚠️ Chỉ nhắm target bạn **sở hữu hoặc có phép bằng văn bản** (pentest có hợp đồng, CTF, lab của bạn).
-> Không cần Docker/`lab/` nếu target đã chạy sẵn ở một URL — bỏ qua bước A.
-
-Cần: **spec của target** (tải từ `/openapi.json`, `/swagger.json`, `/v3/api-docs`; GraphQL thì lấy introspection JSON) và **URL target**.
-
-```bash
-# B — sinh payload cho spec của bạn (REST)
-python scripts/gen_payloads.py --spec ./myapi.yaml --kind rest --target-app myapp \
-       --out Schemathesis/payload_myapp.json
-
-# C — Schemathesis bắn vào target (thêm auth nếu cần)
-export FUZZ_AUTH_HEADER="Bearer <token-cua-ban>"     # bỏ nếu API không cần auth
-python Schemathesis/run_schemathesis1.py \
-       --targets "myapp=./myapi.yaml" --base-urls "myapp=http://TARGET:PORT" \
-       --payloads Schemathesis/payload_myapp.json --rules Schemathesis/rules.json \
-       --results-dir Schemathesis/results
-
-# HOẶC dùng Nuclei
-python scripts/gen_payloads.py --spec ./myapi.yaml --kind nuclei --target-app myapp \
-       --base-url http://TARGET:PORT --out Nuclei/executor/benchmark/suite_myapp.json
-cd Nuclei/executor
-JWT="<token-cua-ban>" python -m executor.run_nuclei \
-       --input benchmark/suite_myapp.json --target http://TARGET:PORT --export-dir ../../results/nuclei
-cd ../..
-
-# GraphQL: --kind graphql với file introspection
-python scripts/gen_payloads.py --spec ./schema_introspection.json --kind graphql --target-app myapp \
-       --out Schemathesis/payload_myapp_graphql.json
-
-# Tổng hợp như thường
-python scripts/aggregate_results.py
-```
-
-## 6. Cấu trúc thư mục
-
-| Đường dẫn | Vai trò |
-|---|---|
-| `core/` | **B**: `analyzer.py` (đọc spec), `gemini_client.py`/`deepseek_client.py` (LLM), `validator.py` (guardrails) |
-| `scripts/` | `gen_payloads.py` (B→C), `aggregate_results.py` (gộp), `run_pipeline.py` (cần deepcode CLI — không bắt buộc), `switch_ai.py` |
-| `Schemathesis/` | **C** REST/GraphQL fuzzer + specs (`*_spec.*`), `rules.json`, `RUNBOOK.md`, `results/` |
-| `Nuclei/executor/` | **C** Nuclei executor; `benchmark/suite.json` là payload nuclei |
-| `lab/` | **A**: `docker-compose.yml` + `lab.sh` + `README.md` dựng 3 target |
-| `dataset/` | Spec gốc + CSV inventory/ground-truth phục vụ benchmark |
-| `tests/` | Unit/integration test của B (`pytest tests/ -q`, 41 test) |
-| `docs/` | Nhật ký kiểm tra, USAGE, evidence |
-| `Aegis Agent/` | Source deepcode CLI (chỉ cần nếu chạy `run_pipeline.py` qua deepcode — không cần cho luồng Gemini) |
-| `baseline/` | Chỗ để kết quả baseline (hiện trống) |
-
----
-
-## 7. Sự cố thường gặp
-
-- **`pip install schemathesis` báo lỗi build `pydantic-core`** → đang dùng Python 3.14. Chuyển sang Python 3.11–3.13.
-- **`.env` mất sau khi git clone** → đúng thiết kế (bị `.gitignore`). Tạo lại `.env` với `GEMINI_API_KEY`.
-- **`lab.sh` tải crAPI báo 404** → mở `lab/lab.sh`, đổi `main` → `develop` trong `CRAPI_URL`.
-- **Docker báo "daemon not running"** → bật Docker (Linux: `sudo systemctl start docker`).
-- **Nuclei trả 401 ở endpoint auth** → chưa truyền `JWT=<token>`; lấy token từ `Schemathesis/tokens.env`.
-- **`tokens.env` MISSING** → chạy `run_auth.py` + `run_dvga.py` khi target đã chạy.
-
----
-
-## 8. Kiểm thử hệ thống
-
-```bash
-pytest tests/ -q     
-```
-
-Xem thêm: `lab/README.md` (chi tiết lab), `Schemathesis/RUNBOOK.md` (chạy lẻ schemathesis),
-`docs/USAGE.md` (luồng qua deepcode CLI — tuỳ chọn).
+- [`docs/USAGE.md`](docs/USAGE.md) - Task B và DeepCode integration.
+- [`lab/README.md`](lab/README.md) - Cài đặt và vận hành target lab.
+- [`Schemathesis/RUNBOOK.md`](Schemathesis/RUNBOOK.md) - Chạy Schemathesis từng target.
+- [`AGENTS.md`](AGENTS.md) - Phạm vi, quy ước và ownership của workspace.
