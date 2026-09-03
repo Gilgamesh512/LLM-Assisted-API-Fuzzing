@@ -206,6 +206,18 @@ Pipeline thực hiện:
 4. Tự sửa output tối đa `MAX_REPAIR_ATTEMPTS` lần.
 5. Ghi danh sách payload hợp lệ cho fuzzing engine.
 
+Mỗi lần chạy thành công cũng ghi run manifest tại
+`results/runs/<run_id>/manifest.json`. Manifest chứa `run_id`, target, provider,
+model, payload count, repair telemetry (`attempts`, `initial_valid`,
+`final_valid`, `successful`) và runtime theo stage: analyzer, LLM generation,
+validation, repair và total. Có thể chỉ định đường dẫn riêng bằng
+`--manifest path/to/run_manifest.json` hoặc model metadata bằng `--model`.
+
+Khi pipeline gọi DeepCode qua subprocess, DeepCode hiện chỉ trả nội dung stdout
+nên token usage không thể suy ra chính xác; manifest ghi `0` cho token cho đến
+khi tầng provider/DeepCode expose usage metadata. Không dùng thời gian chạy để
+ước lượng token.
+
 DeepCode CLI được build từ source trong `Aegis Agent/`. Cài/build khi cần:
 
 ```bash

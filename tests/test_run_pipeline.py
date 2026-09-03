@@ -51,13 +51,19 @@ def test_run_pipeline_happy_path(tmp_path: Path):
 
 def test_run_pipeline_retries_on_invalid_output_then_succeeds(tmp_path: Path):
     output_path = tmp_path / "out.json"
+    manifest_path = tmp_path / "run_manifest.json"
     responses = ["khong phai json hop le", VALID_PAYLOAD_JSON]
     with patch.object(pipeline, "run_deepcode", side_effect=responses) as mock_call:
-        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path)
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, manifest_path=manifest_path)
 
     assert code == 0
     assert mock_call.call_count == 2  # 1 lần đầu + 1 lần repair
     assert output_path.is_file()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["generation"]["repair_count"] == 1
+    assert manifest["repair"] == {
+        "attempts": 1, "initial_valid": False, "final_valid": True, "successful": True
+    }
 
 
 def test_run_pipeline_gives_up_after_max_repair_attempts(tmp_path: Path):

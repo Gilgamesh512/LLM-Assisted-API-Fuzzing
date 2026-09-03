@@ -23,14 +23,32 @@ def _load_rows(path: Path) -> list[dict[str, Any]]:
     return data
 
 
+def _artifact_path(base_dir: Path, value: str | Path) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else base_dir / path
+
+
 def evaluate_manifest(manifest_path: Path) -> list[dict[str, Any]]:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     base_dir = manifest_path.parent
     known = manifest.get("known_vulnerabilities")
+    runs = manifest.get("runs")
+    if runs is None:
+        runs = [{
+            "treatment": manifest.get("treatment", "unknown"),
+            "target": (manifest.get("target") or {}).get("name", "unknown"),
+            "run_id": manifest.get("run_id", "unknown"),
+            "payloads": (manifest.get("artifacts") or {}).get("payloads"),
+            "findings": (manifest.get("artifacts") or {}).get("findings"),
+            "runtime_seconds": (manifest.get("runtime_ms") or {}).get("total", 0) / 1000,
+            "llm_tokens": (manifest.get("generation") or {}).get("total_tokens", 0),
+        }]
     rows: list[dict[str, Any]] = []
-    for run in manifest.get("runs", []):
-        payloads = _load_rows(base_dir / run["payloads"])
-        findings = _load_rows(base_dir / run["findings"])
+    for run in runs:
+        payload_path = run.get("payloads")
+        finding_path = run.get("findings")
+        payloads = _load_rows(_artifact_path(base_dir, payload_path)) if payload_path else []
+        findings = _load_rows(_artifact_path(base_dir, finding_path)) if finding_path else []
         metrics = evaluate_run(
             payloads,
             findings,

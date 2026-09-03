@@ -26,6 +26,7 @@ import json
 import shutil
 import subprocess
 import sys
+import os
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from core.analyzer import SpecLoadError, analyze_file  # noqa: E402
 from core.validator import MAX_REPAIR_ATTEMPTS, validate_llm_output, payloads_to_jsonable  # noqa: E402
+from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E402
+from core.telemetry import RunTelemetry  # noqa: E402
 
 SKILL_NAME = "api-payload-generator"
 DEEPCODE_TIMEOUT_SECONDS = 300
@@ -149,25 +152,49 @@ def run_b2_b3_repair(previous_raw: str, error_message: str, attempt: int, cwd: P
     )
 
 
-def run_pipeline(spec_path: str | Path, output_path: Path, cwd: Path) -> int:
+def run_pipeline(
+    spec_path: str | Path,
+    output_path: Path,
+    cwd: Path,
+    *,
+    provider: str = "unknown",
+    model: str | None = None,
+    manifest_path: Path | None = None,
+) -> int:
+    telemetry = RunTelemetry()
+    run_id = new_run_id()
     context_path = cwd / "context.json"
+    model_name = model or os.environ.get("DEEPCODE_MODEL", "unknown")
 
     print(f"[pipeline] B1 — Parse '{spec_path}' -> {context_path.name}")
+    telemetry.start("analyzer")
     endpoints = run_b1_analyze(spec_path, context_path)
+    telemetry.stop("analyzer")
     print(f"[pipeline]   {len(endpoints)} endpoint.")
 
     print("[pipeline] B2/B3 — Gọi skill api-payload-generator qua deepcode...")
+    telemetry.start("llm_generation")
     raw = run_b2_b3_generate_payloads(context_path, cwd=cwd)
+    telemetry.stop("llm_generation")
 
     print("[pipeline] B4 — Validate output...")
+    telemetry.start("validation")
     result = validate_llm_output(raw)
+    telemetry.record_validation(result.ok)
+    telemetry.stop("validation")
     attempt = 1
     while not result.ok and attempt < MAX_REPAIR_ATTEMPTS:
         attempt += 1
+        telemetry.add_repair()
         print(f"[pipeline]   Không hợp lệ (lần {attempt - 1}): {result.error_message}")
         print(f"[pipeline]   Thử sinh lại (lần {attempt}/{MAX_REPAIR_ATTEMPTS})...")
+        telemetry.start("repair")
         raw = run_b2_b3_repair(raw, result.error_message or "", attempt, cwd=cwd)
+        telemetry.stop("repair")
+        telemetry.start("validation")
         result = validate_llm_output(raw, attempt=attempt)
+        telemetry.record_validation(result.ok)
+        telemetry.stop("validation")
 
     if not result.ok:
         raise PipelineError(
@@ -177,8 +204,23 @@ def run_pipeline(spec_path: str | Path, output_path: Path, cwd: Path) -> int:
 
     payloads = payloads_to_jsonable(result.payloads or [])
     output_path.write_text(json.dumps(payloads, ensure_ascii=False, indent=2), encoding="utf-8")
+    manifest = build_manifest(
+        run_id=run_id,
+        target_name=Path(spec_path).stem,
+        protocol="rest",
+        provider=provider,
+        model=model_name,
+        telemetry=telemetry,
+        payload_count=len(payloads),
+        status="completed",
+        output_path=output_path,
+        context_path=context_path,
+    )
+    final_manifest_path = manifest_path or cwd / "results" / "runs" / run_id / "manifest.json"
+    write_manifest(manifest, final_manifest_path)
 
     print(f"\n[pipeline] THÀNH CÔNG — {len(payloads)} payload hợp lệ, ghi vào {output_path}")
+    print(f"[pipeline] Manifest: {final_manifest_path}")
     by_type: dict[str, int] = {}
     for p in payloads:
         by_type[p["vulnerability_type"]] = by_type.get(p["vulnerability_type"], 0) + 1
@@ -200,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--provider", choices=["deepseek", "gemini"], help="Đổi provider trước khi chạy (gọi switch_ai.py)"
     )
+    parser.add_argument("--model", help="Tên model để ghi vào manifest (không ảnh hưởng DeepCode runtime)")
+    parser.add_argument("--manifest", type=Path, help="Đường dẫn manifest output (mặc định results/runs/<run_id>/manifest.json)")
     args = parser.parse_args(argv)
 
     cwd = REPO_ROOT
@@ -213,7 +257,14 @@ def main(argv: list[str] | None = None) -> int:
             return 1
 
     try:
-        return run_pipeline(args.spec_path, cwd / args.output, cwd=cwd)
+        return run_pipeline(
+            args.spec_path,
+            cwd / args.output,
+            cwd=cwd,
+            provider=args.provider or "unknown",
+            model=args.model,
+            manifest_path=args.manifest,
+        )
     except PipelineError as exc:
         print(f"\n[pipeline] LỖI: {exc}", file=sys.stderr)
         return 1

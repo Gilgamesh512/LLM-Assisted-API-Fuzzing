@@ -50,3 +50,22 @@ def test_evaluate_manifest_reads_run_artifacts(tmp_path):
     assert rows[0]["treatment"] == "B0"
     assert rows[0]["confirmed_findings"] == 1
     assert rows[0]["detection_rate"] == 1.0
+
+
+def test_evaluate_manifest_reads_single_pipeline_manifest(tmp_path):
+    payloads = tmp_path / "payloads.json"
+    findings = tmp_path / "findings.ndjson"
+    payloads.write_text(json.dumps([{"valid": True, "executable": True}]), encoding="utf-8")
+    findings.write_text("", encoding="utf-8")
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({
+        "run_id": "run-1", "target": {"name": "vampi"},
+        "runtime_ms": {"total": 2500}, "generation": {"total_tokens": 12},
+        "artifacts": {"payloads": str(payloads), "findings": str(findings)},
+    }), encoding="utf-8")
+
+    rows = evaluate_manifest(manifest)
+
+    assert rows[0]["run_id"] == "run-1"
+    assert rows[0]["runtime_seconds"] == 2.5
+    assert rows[0]["llm_tokens"] == 12
