@@ -1,0 +1,90 @@
+[
+  {
+    "method": "POST",
+    "path": "/api/login",
+    "operation_id": "login",
+    "tags": [
+      "auth"
+    ],
+    "parameters": [
+      {
+        "name": "username",
+        "type": "string",
+        "location": "body",
+        "required": true
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "location": "body",
+        "required": true
+      }
+    ],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/api/products/{id}",
+    "operation_id": "getProductById",
+    "tags": [
+      "products"
+    ],
+    "parameters": [
+      {
+        "name": "id",
+        "type": "integer",
+        "location": "path",
+        "required": true
+      },
+      {
+        "name": "verbose",
+        "type": "boolean",
+        "location": "query",
+        "required": false
+      }
+    ],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "POST",
+    "path": "/api/users/avatar",
+    "operation_id": "uploadAvatar",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "file",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": true
+  },
+  {
+    "method": "GET",
+    "path": "/api/users/{id}",
+    "operation_id": "getUserById",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "id",
+        "type": "integer",
+        "location": "path",
+        "required": true
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  }
+]

@@ -1,0 +1,14 @@
+﻿Chi so,crAPI,DVGA,VAmPI
+Tong so endpoint,44,"N/A (GraphQL - 1 endpoint /graphql, 19 query/mutation field)",14
+Tong so request baseline (Schemathesis),1030,N/A (khong chay Schemathesis),931
+So loai lo hong ZAP phat hien (distinct alert types),11,15,4
+So instance lo hong ZAP - Critical/High,0,0,0
+So instance lo hong ZAP - Medium,2,11,0
+So instance lo hong ZAP - Low,22,25,5
+So instance lo hong ZAP - Informational,6,18,3
+Schemathesis - so failure (unique),67,N/A,30
+Thoi gian chay Schemathesis,64.01s,N/A,25.55s
+SQLi phat hien (Schemathesis/ZAP),0,0,0
+BOLA/IDOR phat hien,0,0,0
+SSRF phat hien,0,0,0
+JWT/Auth phat hien (Missing authentication warning),32 operations (canh bao),N/A,6 operations (canh bao)

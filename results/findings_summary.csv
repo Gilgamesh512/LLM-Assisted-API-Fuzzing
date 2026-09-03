@@ -1,0 +1,11 @@
+﻿tool,target_app,endpoint,method,vuln_type,severity,http_status,confirmed,evidence,reference
+schemathesis,petstore,/pet/{petId},DELETE,BOLA,high,500,True,HTTP 500; matched: []; lien quan CVE-2026-65013 (CVSS 8.8),"CVE-2026-65013,CVE-2026-68582,CVE-2026-76236"
+graphql,dvga,/graphql,POST,COMMAND_INJECTION,medium,200,True,"HTTP 200; matched signal=['dvga_cmdi_marker', 'debug']",
+schemathesis,crapi,/community/api/v2/community/posts,POST,XSS,medium,200,True,"HTTP 200; leaked signal: ['crapi_xss_test', 'alert(']",
+schemathesis,petstore,/pet/{petId},GET,BOLA,medium,200,True,"HTTP 200; leaked signal: ['id', 'name', 'category']","CVE-2026-65013,CVE-2026-68582,CVE-2026-76236"
+graphql,dvga,/graphql,POST,SQL_INJECTION,info,400,False,"HTTP 400; GraphQL errors=['Unknown argument ""version"" on field ""systemUpdate"" of type ""Query"".']",
+schemathesis,crapi,/community/api/v2/community/posts/{postId},GET,SQL_INJECTION,info,400,False,HTTP 400; khong phat hien dau hieu bat thuong,
+schemathesis,petstore,/pet/findByStatus,GET,SQL_INJECTION,info,400,False,HTTP 400; khong phat hien dau hieu bat thuong,
+schemathesis,vampi,/users/v1,GET,SQL_INJECTION,info,200,False,HTTP 200; khong phat hien dau hieu bat thuong,
+schemathesis,,/users/v1/{username},GET,BOLA,info,200,False,HTTP 200; khong phat hien dau hieu bat thuong,"CVE-2026-48528,CVE-2026-73061,CVE-2026-50561"
+schemathesis,petstore,/pet/{petId}/uploadImage,POST,COMMAND_INJECTION,unknown,,False,request loi: Path parameter 'petId' is not defined,

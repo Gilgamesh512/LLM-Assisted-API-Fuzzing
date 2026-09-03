@@ -1,0 +1,226 @@
+{
+  "target": "http://localhost:5002",
+  "test_cases": [
+    {
+      "id": "vampi-users-debug",
+      "endpoint": "/users/v1/_debug",
+      "method": "GET",
+      "vuln_type": "INFO_DISCLOSURE",
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200
+        ],
+        "words": [
+          "debug",
+          "users"
+        ],
+        "regex": [],
+        "dsl": [],
+        "condition": "and"
+      },
+      "severity": "medium"
+    },
+    {
+      "id": "vampi-get-users",
+      "endpoint": "/users/v1",
+      "method": "GET",
+      "vuln_type": "BOLA",
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200
+        ],
+        "words": [
+          "username"
+        ],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "low"
+    },
+    {
+      "id": "vampi-get-books",
+      "endpoint": "/books/v1",
+      "method": "GET",
+      "vuln_type": "BOLA",
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200
+        ],
+        "words": [
+          "book_title"
+        ],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "low"
+    },
+    {
+      "id": "vampi-get-user-profile",
+      "endpoint": "/users/v1/admin",
+      "method": "GET",
+      "vuln_type": "BOLA",
+      "headers": {},
+      "path_params": {
+        "username": "admin"
+      },
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200
+        ],
+        "words": [
+          "email"
+        ],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "medium"
+    },
+    {
+      "id": "vampi-me-unauthorized",
+      "endpoint": "/me",
+      "method": "GET",
+      "vuln_type": "AUTH",
+      "headers": {},
+      "path_params": {},
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          401,
+          422
+        ],
+        "words": [],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "low"
+    },
+    {
+      "id": "vampi-me-authorized",
+      "endpoint": "/me",
+      "method": "GET",
+      "vuln_type": "AUTH",
+      "headers": {
+        "Authorization": "Bearer {{jwt}}"
+      },
+      "path_params": {},
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200
+        ],
+        "words": [
+          "username"
+        ],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "info"
+    },
+    {
+      "id": "vampi-post-book",
+      "endpoint": "/books/v1",
+      "method": "POST",
+      "vuln_type": "BOLA",
+      "headers": {
+        "Authorization": "Bearer {{jwt}}",
+        "Content-Type": "application/json"
+      },
+      "path_params": {},
+      "query_params": {},
+      "body": "{\"book_title\": \"test_book\", \"secret\": \"my_secret\"}",
+      "payload": "",
+      "matchers": {
+        "status": [
+          200,
+          201
+        ],
+        "words": [],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "medium"
+    },
+    {
+      "id": "vampi-update-email",
+      "endpoint": "/users/v1/testuser/email",
+      "method": "PUT",
+      "vuln_type": "BOLA",
+      "headers": {
+        "Authorization": "Bearer {{jwt}}",
+        "Content-Type": "application/json"
+      },
+      "path_params": {
+        "username": "testuser"
+      },
+      "query_params": {},
+      "body": "{\"email\": \"attacker@vampi.local\"}",
+      "payload": "",
+      "matchers": {
+        "status": [
+          200,
+          403
+        ],
+        "words": [],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "high"
+    },
+    {
+      "id": "vampi-delete-user",
+      "endpoint": "/users/v1/testuser",
+      "method": "DELETE",
+      "vuln_type": "BOLA",
+      "headers": {
+        "Authorization": "Bearer {{jwt}}"
+      },
+      "path_params": {
+        "username": "testuser"
+      },
+      "query_params": {},
+      "body": null,
+      "payload": "",
+      "matchers": {
+        "status": [
+          200,
+          403
+        ],
+        "words": [],
+        "regex": [],
+        "dsl": [],
+        "condition": "or"
+      },
+      "severity": "high"
+    }
+  ],
+  "variables": {}
+}

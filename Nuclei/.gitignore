@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Bí mật / môi trường
+.env
+
+# Kết quả chạy / file tạm
+*.jsonl
+vulnerabilities.csv
+vulnerabilities.ndjson
+result.json
+nuclei_tpl_*/
+
+# Binary công cụ
+nuclei
+nuclei.exe

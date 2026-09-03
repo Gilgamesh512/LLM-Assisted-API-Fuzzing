@@ -1,0 +1,262 @@
+[
+  {
+    "method": "GET",
+    "path": "/",
+    "operation_id": "api_views.main.basic",
+    "tags": [
+      "home"
+    ],
+    "parameters": [],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/books/v1",
+    "operation_id": "api_views.books.get_all_books",
+    "tags": [
+      "books"
+    ],
+    "parameters": [],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "POST",
+    "path": "/books/v1",
+    "operation_id": "api_views.books.add_new_book",
+    "tags": [
+      "books"
+    ],
+    "parameters": [
+      {
+        "name": "book_title",
+        "type": "string",
+        "location": "body",
+        "required": false
+      },
+      {
+        "name": "secret",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/books/v1/{book_title}",
+    "operation_id": "api_views.books.get_by_title",
+    "tags": [
+      "books"
+    ],
+    "parameters": [
+      {
+        "name": "book_title",
+        "type": "string",
+        "location": "path",
+        "required": true
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/createdb",
+    "operation_id": "api_views.main.populate_db",
+    "tags": [
+      "db-init"
+    ],
+    "parameters": [],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/me",
+    "operation_id": "api_views.users.me",
+    "tags": [
+      "users"
+    ],
+    "parameters": [],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/users/v1",
+    "operation_id": "api_views.users.get_all_users",
+    "tags": [
+      "users"
+    ],
+    "parameters": [],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/users/v1/_debug",
+    "operation_id": "api_views.users.debug",
+    "tags": [
+      "users"
+    ],
+    "parameters": [],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "POST",
+    "path": "/users/v1/login",
+    "operation_id": "api_views.users.login_user",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "password",
+        "type": "string",
+        "location": "body",
+        "required": false
+      },
+      {
+        "name": "username",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "POST",
+    "path": "/users/v1/register",
+    "operation_id": "api_views.users.register_user",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "email",
+        "type": "string",
+        "location": "body",
+        "required": false
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "location": "body",
+        "required": false
+      },
+      {
+        "name": "username",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "DELETE",
+    "path": "/users/v1/{username}",
+    "operation_id": "api_views.users.delete_user",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "username",
+        "type": "string",
+        "location": "path",
+        "required": true
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  },
+  {
+    "method": "GET",
+    "path": "/users/v1/{username}",
+    "operation_id": "api_views.users.get_by_username",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "username",
+        "type": "string",
+        "location": "path",
+        "required": true
+      }
+    ],
+    "authentication": false,
+    "jwt": false,
+    "file_upload": false
+  },
+  {
+    "method": "PUT",
+    "path": "/users/v1/{username}/email",
+    "operation_id": "api_views.users.update_email",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "username",
+        "type": "string",
+        "location": "path",
+        "required": true
+      },
+      {
+        "name": "email",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  },
+  {
+    "method": "PUT",
+    "path": "/users/v1/{username}/password",
+    "operation_id": "api_views.users.update_password",
+    "tags": [
+      "users"
+    ],
+    "parameters": [
+      {
+        "name": "username",
+        "type": "string",
+        "location": "path",
+        "required": true
+      },
+      {
+        "name": "password",
+        "type": "string",
+        "location": "body",
+        "required": false
+      }
+    ],
+    "authentication": true,
+    "jwt": true,
+    "file_upload": false
+  }
+]

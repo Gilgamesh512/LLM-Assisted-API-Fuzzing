@@ -1,0 +1,22 @@
+
+
+services:
+  vampi:
+    image: erev0s/vampi:latest
+    container_name: vampi
+    # VAmPI lắng nghe cổng 5000 trong container; map ra host 5002 cho khớp script.
+    ports:
+      - "5002:5000"
+    environment:
+      # vulnerable=1: bật chế độ CÓ lỗ hổng (mục đích của lab). =0 là bản đã vá.
+      - vulnerable=1
+    restart: unless-stopped
+
+  dvga:
+    image: dolevf/dvga:latest
+    container_name: dvga
+    ports:
+      - "5013:5013"
+    environment:
+      - WEB_HOST=0.0.0.0
+    restart: unless-stopped

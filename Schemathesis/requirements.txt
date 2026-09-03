@@ -1,0 +1,5 @@
+schemathesis==4.24.3
+pydantic==2.9.2
+httpx==0.28.1
+pyyaml==6.0.3
+requests==2.32.3

@@ -1,0 +1,13 @@
+.schemathesis/
+.hypothesis/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+.env
+.env.*
+*.env
+.spec_cache/
+
+# Không bao giờ commit settings có API key thật
+.deepcode/settings.local.json

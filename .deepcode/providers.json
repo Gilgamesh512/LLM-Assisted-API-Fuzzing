@@ -1,0 +1,22 @@
+{
+  "_comment": "Provider profiles cho scripts/switch_ai.py — KHÔNG chứa API key (key nằm ở .env / ~/.deepcode/settings.json, không commit git).",
+  "deepseek": {
+    "env": {
+      "MODEL": "deepseek-v4-pro",
+      "BASE_URL": "https://api.deepseek.com"
+    },
+    "thinkingEnabled": true,
+    "reasoningEffort": "max",
+    "key_env_var": "DEEPSEEK_API_KEY",
+    "get_key_url": "https://platform.deepseek.com/api_keys"
+  },
+  "gemini": {
+    "env": {
+      "MODEL": "gemini-2.5-flash",
+      "BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/"
+    },
+    "thinkingEnabled": false,
+    "key_env_var": "GEMINI_API_KEY",
+    "get_key_url": "https://aistudio.google.com/apikey"
+  }
+}

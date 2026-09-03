@@ -1,0 +1,111 @@
+﻿Application,Method,Endpoint,Parameter,Type,Auth,JWT,Potential Issue
+crAPI,POST,/identity/api/auth/signup,email,string,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/signup,name,string,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/signup,number,string,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/signup,password,string,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/login,email,string,No,Yes,Potential SQLi
+crAPI,POST,/identity/api/auth/login,password,string,No,Yes,Potential SQLi
+crAPI,POST,/identity/api/auth/forget-password,email,string,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/v3/check-otp,(body),#/components/schemas/OtpForm,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/v2/check-otp,(body),#/components/schemas/OtpForm,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/v4.0/user/login-with-token,(body),#/components/schemas/LoginWithEmailToken,No,No,Potential SQLi
+crAPI,POST,/identity/api/auth/v2.7/user/login-with-token,(body),#/components/schemas/LoginWithEmailToken,No,Yes,Potential SQLi
+crAPI,POST,/identity/api/v2/user/reset-password,email,string,Yes,Yes,Potential SQLi
+crAPI,POST,/identity/api/v2/user/reset-password,password,string,Yes,Yes,Potential SQLi
+crAPI,POST,/identity/api/v2/user/change-email,new_email,string,Yes,Yes,Potential Injection
+crAPI,POST,/identity/api/v2/user/change-email,old_email,string,Yes,Yes,Potential Injection
+crAPI,POST,/identity/api/v2/user/verify-email-token,old_email,string,Yes,Yes,Potential Injection
+crAPI,POST,/identity/api/v2/user/verify-email-token,new_email,string,Yes,Yes,Potential Injection
+crAPI,POST,/identity/api/v2/user/verify-email-token,token,string,Yes,Yes,Potential Injection
+crAPI,GET,/identity/api/v2/user/dashboard,-,-,Yes,Yes,Unknown
+crAPI,POST,/identity/api/v2/user/pictures,file,string,Yes,Yes,Potential SSRF
+crAPI,POST,/identity/api/v2/user/videos,file,string,Yes,Yes,Potential file upload issue
+crAPI,GET,/identity/api/v2/user/videos/{video_id},video_id,integer,Yes,Yes,Potential BOLA
+crAPI,PUT,/identity/api/v2/user/videos/{video_id},video_id,integer,Yes,Yes,Potential BOLA
+crAPI,PUT,/identity/api/v2/user/videos/{video_id},(body),#/components/schemas/VideoForm,Yes,Yes,Potential BOLA
+crAPI,DELETE,/identity/api/v2/user/videos/{video_id},video_id,integer,Yes,Yes,Potential BOLA
+crAPI,GET,/identity/api/v2/user/videos/convert_video,video_id,integer,Yes,Yes,Potential BOLA
+crAPI,DELETE,/identity/api/v2/admin/videos/{video_id},video_id,integer,Yes,Yes,Potential BOLA
+crAPI,GET,/identity/api/v2/vehicle/vehicles,-,-,Yes,Yes,Unknown
+crAPI,POST,/identity/api/v2/vehicle/add_vehicle,pincode,string,Yes,Yes,Potential Injection
+crAPI,POST,/identity/api/v2/vehicle/add_vehicle,vin,string,Yes,Yes,Potential Injection
+crAPI,GET,/identity/api/v2/vehicle/{vehicleId}/location,-,-,Yes,Yes,Potential BOLA
+crAPI,POST,/identity/api/v2/vehicle/resend_email,-,-,Yes,Yes,Potential Injection
+crAPI,GET,/community/api/v2/community/posts/{postId},-,-,Yes,Yes,Potential BOLA
+crAPI,POST,/community/api/v2/community/posts,content,string,Yes,Yes,Potential Injection
+crAPI,POST,/community/api/v2/community/posts,title,string,Yes,Yes,Potential Injection
+crAPI,POST,/community/api/v2/community/posts/{postId}/comment,content,string,Yes,Yes,Potential BOLA
+crAPI,GET,/community/api/v2/community/posts/recent,limit,integer,Yes,Yes,Unknown
+crAPI,GET,/community/api/v2/community/posts/recent,offset,integer,Yes,Yes,Unknown
+crAPI,POST,/community/api/v2/coupon/new-coupon,(body),#/components/schemas/AddCouponRequest,Yes,Yes,Potential Injection
+crAPI,POST,/community/api/v2/coupon/validate-coupon,(body),#/components/schemas/ValidateCouponRequest,Yes,Yes,Potential Injection
+crAPI,GET,/workshop/api/shop/products,-,-,Yes,Yes,Unknown
+crAPI,POST,/workshop/api/shop/products,(body),#/components/schemas/NewProduct,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/shop/orders,(body),#/components/schemas/ProductQuantity,Yes,Yes,Potential Injection
+crAPI,PUT,/workshop/api/shop/orders/{order_id},order_id,integer,Yes,Yes,Potential BOLA
+crAPI,PUT,/workshop/api/shop/orders/{order_id},(body),#/components/schemas/ProductQuantity,Yes,Yes,Potential BOLA
+crAPI,GET,/workshop/api/shop/orders/{order_id},order_id,integer,Yes,Yes,Potential BOLA
+crAPI,GET,/workshop/api/shop/orders/all,limit,integer,Yes,Yes,Unknown
+crAPI,GET,/workshop/api/shop/orders/all,offset,integer,Yes,Yes,Unknown
+crAPI,POST,/workshop/api/shop/orders/return_order,order_id,integer,Yes,Yes,Potential BOLA
+crAPI,POST,/workshop/api/shop/apply_coupon,(body),#/components/schemas/ApplyCouponRequest,Yes,Yes,Potential Injection
+crAPI,GET,/workshop/api/shop/return_qr_code,Accept,string,Yes,No,Unknown
+crAPI,GET,/workshop/api/management/users/all,limit,integer,Yes,Yes,Unknown
+crAPI,GET,/workshop/api/management/users/all,offset,integer,Yes,Yes,Unknown
+crAPI,GET,/workshop/api/mechanic/,-,-,Yes,Yes,Unknown
+crAPI,POST,/workshop/api/merchant/contact_mechanic,number_of_repeats,number,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/merchant/contact_mechanic,mechanic_api,string,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/merchant/contact_mechanic,vin,string,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/merchant/contact_mechanic,repeat_request_if_failed,boolean,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/merchant/contact_mechanic,problem_details,string,Yes,Yes,Potential Injection
+crAPI,POST,/workshop/api/merchant/contact_mechanic,mechanic_code,string,Yes,Yes,Potential Injection
+crAPI,GET,/workshop/api/mechanic/receive_report,mechanic_code,string,No,No,Unknown
+crAPI,GET,/workshop/api/mechanic/receive_report,problem_details,string,No,No,Unknown
+crAPI,GET,/workshop/api/mechanic/receive_report,vin,string,No,No,Unknown
+crAPI,GET,/workshop/api/mechanic/mechanic_report,report_id,integer,Yes,Yes,Potential BOLA
+crAPI,GET,/workshop/api/mechanic/service_requests,limit,integer,Yes,Yes,Unknown
+crAPI,GET,/workshop/api/mechanic/service_requests,offset,integer,Yes,Yes,Unknown
+crAPI,POST,/workshop/api/mechanic/signup,name,string,No,No,Potential Injection
+crAPI,POST,/workshop/api/mechanic/signup,email,string,No,No,Potential Injection
+crAPI,POST,/workshop/api/mechanic/signup,number,string,No,No,Potential Injection
+crAPI,POST,/workshop/api/mechanic/signup,password,string,No,No,Potential Injection
+crAPI,POST,/workshop/api/mechanic/signup,mechanic_code,string,No,No,Potential Injection
+VAmPI,GET,/,-,-,No,No,Unknown
+VAmPI,GET,/books/v1,-,-,No,No,Unknown
+VAmPI,POST,/books/v1,book_title,string,Yes,Yes,Potential Injection
+VAmPI,POST,/books/v1,secret,string,Yes,Yes,Potential Injection
+VAmPI,GET,/books/v1/{book_title},book_title,string,Yes,Yes,Potential BOLA
+VAmPI,GET,/createdb,-,-,No,No,Unknown
+VAmPI,GET,/me,-,-,Yes,Yes,Unknown
+VAmPI,GET,/users/v1,-,-,No,No,Unknown
+VAmPI,GET,/users/v1/_debug,-,-,No,No,Unknown
+VAmPI,POST,/users/v1/login,password,string,No,No,Potential SQLi
+VAmPI,POST,/users/v1/login,username,string,No,No,Potential SQLi
+VAmPI,POST,/users/v1/register,email,string,No,No,Potential Injection
+VAmPI,POST,/users/v1/register,password,string,No,No,Potential Injection
+VAmPI,POST,/users/v1/register,username,string,No,No,Potential Injection
+VAmPI,DELETE,/users/v1/{username},username,string,Yes,Yes,Potential BOLA
+VAmPI,GET,/users/v1/{username},username,string,No,No,Potential BOLA
+VAmPI,PUT,/users/v1/{username}/email,username,string,Yes,Yes,Potential BOLA
+VAmPI,PUT,/users/v1/{username}/email,email,string,Yes,Yes,Potential BOLA
+VAmPI,PUT,/users/v1/{username}/password,username,string,Yes,Yes,Potential BOLA
+VAmPI,PUT,/users/v1/{username}/password,password,string,Yes,Yes,Potential BOLA
+DVGA,QUERY(GraphQL),/graphql -> pastes,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,QUERY(GraphQL),/graphql -> paste,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,QUERY(GraphQL),/graphql -> systemUpdate,(theo schema),object,Yes(một số),Yes,Potential Info Disclosure
+DVGA,QUERY(GraphQL),/graphql -> systemDiagnostics,(theo schema),object,Yes(một số),Yes,Potential Info Disclosure
+DVGA,QUERY(GraphQL),/graphql -> systemDebug,(theo schema),object,Yes(một số),Yes,Potential Info Disclosure
+DVGA,QUERY(GraphQL),/graphql -> systemHealth,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,QUERY(GraphQL),/graphql -> users,(theo schema),object,Yes(một số),Yes,Potential Auth/SQLi
+DVGA,QUERY(GraphQL),/graphql -> readAndBurn,(theo schema),object,Yes(một số),Yes,Potential BOLA / data destruction
+DVGA,QUERY(GraphQL),/graphql -> search,(theo schema),object,Yes(một số),Yes,Potential Injection
+DVGA,QUERY(GraphQL),/graphql -> audits,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,QUERY(GraphQL),/graphql -> deleteAllPastes,(theo schema),object,Yes(một số),Yes,Potential BOLA / data destruction
+DVGA,QUERY(GraphQL),/graphql -> me,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,MUTATION(GraphQL),/graphql -> createPaste,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,MUTATION(GraphQL),/graphql -> editPaste,(theo schema),object,Yes(một số),Yes,Unknown
+DVGA,MUTATION(GraphQL),/graphql -> deletePaste,(theo schema),object,Yes(một số),Yes,Potential BOLA / data destruction
+DVGA,MUTATION(GraphQL),/graphql -> uploadPaste,(theo schema),object,Yes(một số),Yes,Potential SSRF / file upload issue
+DVGA,MUTATION(GraphQL),/graphql -> importPaste,(theo schema),object,Yes(một số),Yes,Potential SSRF / file upload issue
+DVGA,MUTATION(GraphQL),/graphql -> createUser,(theo schema),object,Yes(một số),Yes,Potential Auth/SQLi
+DVGA,MUTATION(GraphQL),/graphql -> login,(theo schema),object,Yes(một số),Yes,Potential Auth/SQLi

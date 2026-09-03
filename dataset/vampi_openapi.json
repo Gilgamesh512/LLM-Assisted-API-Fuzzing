@@ -1,0 +1,1017 @@
+{
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "bearerFormat": "JWT",
+        "scheme": "bearer",
+        "type": "http",
+        "x-bearerInfoFunc": "models.user_model.User.decode_auth_token"
+      }
+    }
+  },
+  "info": {
+    "description": "OpenAPI v3 specs for VAmPI",
+    "title": "VAmPI",
+    "version": "0.1"
+  },
+  "openapi": "3.0.1",
+  "paths": {
+    "/": {
+      "get": {
+        "description": "VAmPI is a vulnerable on purpose API. It was created in order to evaluate the efficiency of third party tools in identifying vulnerabilities in APIs but it can also be used in learning/teaching purposes.",
+        "operationId": "api_views.main.basic",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "help": {
+                      "example": "VAmPI is a vulnerable on purpose API. It was created in order to evaluate the efficiency of third party tools in identifying vulnerabilities in APIs but it can also be used in learning/teaching purposes.",
+                      "type": "string"
+                    },
+                    "message": {
+                      "example": "VAmPI the Vulnerable API",
+                      "type": "string"
+                    },
+                    "vulnerable": {
+                      "example": 1,
+                      "type": "number"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Home - Help"
+          }
+        },
+        "summary": "VAmPI home",
+        "tags": [
+          "home"
+        ]
+      }
+    },
+    "/books/v1": {
+      "get": {
+        "description": "Retrieves all books",
+        "operationId": "api_views.books.get_all_books",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "example": {
+                  "Books": [
+                    {
+                      "book_title": "bookTitle77",
+                      "user": "name1"
+                    },
+                    {
+                      "book_title": "bookTitle85",
+                      "user": "name2"
+                    },
+                    {
+                      "book_title": "bookTitle47",
+                      "user": "admin"
+                    }
+                  ]
+                },
+                "schema": {
+                  "properties": {
+                    "Books": {
+                      "items": {
+                        "properties": {
+                          "book_title": {
+                            "type": "string"
+                          },
+                          "user": {
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "See all books"
+          }
+        },
+        "summary": "Retrieves all books",
+        "tags": [
+          "books"
+        ]
+      },
+      "post": {
+        "description": "Add new book",
+        "operationId": "api_views.books.add_new_book",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "book_title": {
+                    "example": "book99",
+                    "type": "string"
+                  },
+                  "secret": {
+                    "example": "pass1secret",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "Add new book with title and secret content only available to the user who added it.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Book has been added.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "success",
+                        "fail"
+                      ],
+                      "example": "success",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successfully added a book"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Book Already exists!",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Invalid token. Please log in again.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not authorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Add new book",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/books/v1/{book_title}": {
+      "get": {
+        "description": "Retrieves book by title along with secret. Only the owner may retrieve it",
+        "operationId": "api_views.books.get_by_title",
+        "parameters": [
+          {
+            "description": "retrieve book data",
+            "in": "path",
+            "name": "book_title",
+            "required": true,
+            "schema": {
+              "example": "bookTitle77",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "book_title": {
+                        "example": "bookTitle77",
+                        "type": "string"
+                      },
+                      "owner": {
+                        "example": "name1",
+                        "type": "string"
+                      },
+                      "secret": {
+                        "example": "secret for bookTitle77",
+                        "type": "string"
+                      }
+                    },
+                    "type": "object"
+                  },
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successfully retrieve book info"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Invalid token. Please log in again.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Book not found!",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Book not found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Retrieves book by title along with secret",
+        "tags": [
+          "books"
+        ]
+      }
+    },
+    "/createdb": {
+      "get": {
+        "description": "Creates and populates the database with dummy data",
+        "operationId": "api_views.main.populate_db",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Database populated.",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Creates and populates the database with dummy data"
+          }
+        },
+        "summary": "Creates and populates the database with dummy data",
+        "tags": [
+          "db-init"
+        ]
+      }
+    },
+    "/me": {
+      "get": {
+        "description": "Displays information about the currently authenticated user",
+        "operationId": "api_views.users.me",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "data": {
+                      "properties": {
+                        "admin": {
+                          "example": false,
+                          "type": "boolean"
+                        },
+                        "email": {
+                          "example": "mail1@mail.com",
+                          "type": "string"
+                        },
+                        "username": {
+                          "example": "name1",
+                          "type": "string"
+                        }
+                      },
+                      "type": "object"
+                    },
+                    "status": {
+                      "example": "success",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Display current user info"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "enum": [
+                        "Signature expired. Please log in again.",
+                        "Invalid token. Please log in again."
+                      ],
+                      "type": "string"
+                    },
+                    "status": {
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Unauthorized access due to expired, invalid, or missing token"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Retrieves currently logged in user",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1": {
+      "get": {
+        "description": "Displays all users with basic information",
+        "operationId": "api_views.users.get_all_users",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "users": {
+                      "items": {
+                        "properties": {
+                          "email": {
+                            "example": "mail1@mail.com",
+                            "type": "string"
+                          },
+                          "username": {
+                            "example": "name1",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "See basic info about all users"
+          }
+        },
+        "summary": "Retrieves all users",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/_debug": {
+      "get": {
+        "description": "Displays all details for all users",
+        "operationId": "api_views.users.debug",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "users": {
+                      "items": {
+                        "properties": {
+                          "admin": {
+                            "example": false,
+                            "type": "boolean"
+                          },
+                          "email": {
+                            "example": "mail1@mail.com",
+                            "type": "string"
+                          },
+                          "password": {
+                            "example": "pass1",
+                            "type": "string"
+                          },
+                          "username": {
+                            "example": "name1",
+                            "type": "string"
+                          }
+                        },
+                        "type": "object"
+                      },
+                      "type": "array"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "See all details of the users"
+          }
+        },
+        "summary": "Retrieves all details for all users",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/login": {
+      "post": {
+        "description": "Login to VAmPI",
+        "operationId": "api_views.users.login_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "password": {
+                    "example": "pass1",
+                    "type": "string"
+                  },
+                  "username": {
+                    "example": "name1",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "Username of the user",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "auth_token": {
+                      "example": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJleHAiOjE2NzAxNjA2MTcsImlhdCI6MTY3MDE2MDU1Nywic3ViIjoiSm9obi5Eb2UifQ.n17N4AxTbL4_z65-NR46meoytauPDjImUxrLiUMSTQw",
+                      "type": "string"
+                    },
+                    "message": {
+                      "example": "Successfully logged in.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "success",
+                        "fail"
+                      ],
+                      "example": "success",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Sucessfully logged in user"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Password is not correct for the given username.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Login to VAmPI",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/register": {
+      "post": {
+        "description": "Register new user",
+        "operationId": "api_views.users.register_user",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "email": {
+                    "example": "user@tempmail.com",
+                    "type": "string"
+                  },
+                  "password": {
+                    "example": "pass1",
+                    "type": "string"
+                  },
+                  "username": {
+                    "example": "name1",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "Username of the user",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Successfully registered. Login to receive an auth token.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "success",
+                        "fail"
+                      ],
+                      "example": "success",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successfully created user"
+          },
+          "400": {
+            "content": {},
+            "description": "Invalid request"
+          }
+        },
+        "summary": "Register new user",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/{username}": {
+      "delete": {
+        "description": "Deletes user by username (Only Admins)",
+        "operationId": "api_views.users.delete_user",
+        "parameters": [
+          {
+            "description": "Delete username",
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "example": "name1",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "User deleted.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "success",
+                        "fail"
+                      ],
+                      "example": "success",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successfully deleted user"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Only Admins may delete users!",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not authorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "User not found!",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not found"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Deletes user by username (Only Admins)",
+        "tags": [
+          "users"
+        ]
+      },
+      "get": {
+        "description": "Displays user by username",
+        "operationId": "api_views.users.get_by_username",
+        "parameters": [
+          {
+            "description": "retrieve username data",
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "example": "name1",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "email": {
+                      "example": "mail1@mail.com",
+                      "type": "string"
+                    },
+                    "username": {
+                      "example": "name1",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successfully display user info"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "User not found",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not found"
+          }
+        },
+        "summary": "Retrieves user by username",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/{username}/email": {
+      "put": {
+        "description": "Update a single users email",
+        "operationId": "api_views.users.update_email",
+        "parameters": [
+          {
+            "description": "username to update email",
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "example": "name1",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "email": {
+                    "example": "mail3@mail.com",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "field to update",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "content": {},
+            "description": "Successfully updated user email"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Please Provide a valid email address.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Invalid token. Please log in again.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not authorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update users email",
+        "tags": [
+          "users"
+        ]
+      }
+    },
+    "/users/v1/{username}/password": {
+      "put": {
+        "description": "Update users password",
+        "operationId": "api_views.users.update_password",
+        "parameters": [
+          {
+            "description": "username to update password",
+            "in": "path",
+            "name": "username",
+            "required": true,
+            "schema": {
+              "example": "name1",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "properties": {
+                  "password": {
+                    "example": "pass4",
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              }
+            }
+          },
+          "description": "field to update",
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "content": {},
+            "description": "Successfully updated users password"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Malformed Data",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Invalid request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "example": "Invalid token. Please log in again.",
+                      "type": "string"
+                    },
+                    "status": {
+                      "enum": [
+                        "fail"
+                      ],
+                      "example": "fail",
+                      "type": "string"
+                    }
+                  },
+                  "type": "object"
+                }
+              }
+            },
+            "description": "User not authorized"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Update users password",
+        "tags": [
+          "users"
+        ]
+      }
+    }
+  },
+  "servers": [
+    {
+      "url": ""
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    name: Node ${{ matrix.node-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
+        node-version:
+          - "22"
+          - "24"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+          cache-dependency-path: Aegis Agent/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: Aegis Agent
+
+      - name: TypeCheck + Lint + Format Check
+        run: npm run check
+        working-directory: Aegis Agent
+
+      - name: Build Core
+        run: npm run build --workspace=@vegamo/deepcode-core
+        working-directory: Aegis Agent
+
+      - name: Bundle CLI
+        run: npm run bundle
+        working-directory: Aegis Agent
+
+      - name: Build VSCode Extension
+        run: npm run build:vscode
+        working-directory: Aegis Agent
+
+      - name: Test
+        run: npm test
+        working-directory: Aegis Agent
+
+  python-security:
+    name: Python security pipeline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Test security pipeline
+        run: python -m pytest tests/ -q
+
+      - name: Security gate current findings
+        if: hashFiles('results/findings_summary.ndjson') != ''
+        run: python scripts/security_gate.py results/findings_summary.ndjson --fail-on high

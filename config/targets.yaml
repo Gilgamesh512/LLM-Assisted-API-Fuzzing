@@ -1,0 +1,47 @@
+# Nguồn DUY NHẤT khai báo target cho toàn pipeline (B phân tích spec + C fuzzing).
+# Thêm/đổi target chỉ sửa file này, không đụng code.
+# KHÔNG để secret ở đây: password/token dùng token_env trỏ tới biến môi trường (.env).
+
+allowed_targets: [vampi, crapi, dvga]      # chỉ target trong danh sách này mới được bắn
+
+targets:
+  vampi:
+    kind: rest                              # rest | graphql
+    base_url: http://localhost:5002
+    spec: dataset/vampi_openapi.json
+    payload_out: Schemathesis/payload_rest.json
+    nuclei_out: Nuclei/executor/benchmark/suite.json
+    auth:
+      type: login                           # none | login | static
+      login_url: http://localhost:5002/users/v1/login
+      register_url: http://localhost:5002/users/v1/register
+
+  crapi:
+    kind: rest
+    base_url: http://localhost:8888
+    spec: Schemathesis/crapi_openapi_spec.json
+    payload_out: Schemathesis/payload_crapi.json
+    auth:
+      type: login
+      login_url: http://localhost:8888/identity/api/auth/login
+      register_url: http://localhost:8888/identity/api/auth/signup
+
+  dvga:
+    kind: graphql
+    base_url: http://localhost:5013
+    graphql_path: /graphql
+    spec: dataset/dvga_schema.json
+    payload_out: Schemathesis/payload_graphql.json
+    auth:
+      type: login
+
+  # Ví dụ target web THẬT (bỏ comment + thêm vào allowed_targets để dùng).
+  # Cấu trúc y hệt, chỉ đổi giá trị -> pipeline không cần biết là lab hay web thật.
+  # myprod:
+  #   kind: rest
+  #   base_url: https://api.congty.com
+  #   spec_url: https://api.congty.com/openapi.json   # tải spec từ URL
+  #   payload_out: Schemathesis/payload_myprod.json
+  #   auth:
+  #     type: static
+  #     token_env: MYPROD_TOKEN                        # token đặt ở .env, không hardcode

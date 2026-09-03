@@ -1,0 +1,4 @@
+﻿target,generation,n_payloads,n_success,n_anomaly,n_miss,exploited
+vampi,0,1,0,0,1,False
+vampi,1,1,0,1,0,False
+vampi,2,1,1,0,0,True
