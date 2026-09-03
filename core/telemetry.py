@@ -9,20 +9,28 @@ from typing import Any
 
 @dataclass
 class LLMUsage:
-    prompt_tokens: int = 0
-    completion_tokens: int = 0
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    available: bool = False
+    source: str = "not_exposed_by_deepcode"
 
     @property
-    def total_tokens(self) -> int:
+    def total_tokens(self) -> int | None:
+        if self.prompt_tokens is None or self.completion_tokens is None:
+            return None
         return self.prompt_tokens + self.completion_tokens
 
-    def add(self, usage: dict[str, Any] | None) -> None:
+    def add(self, usage: dict[str, Any] | None, source: str = "provider") -> None:
         if not usage:
             return
-        self.prompt_tokens += int(usage.get("prompt_tokens", usage.get("promptTokenCount", 0)) or 0)
-        self.completion_tokens += int(
-            usage.get("completion_tokens", usage.get("candidatesTokenCount", 0)) or 0
-        )
+        prompt = usage.get("prompt_tokens", usage.get("promptTokenCount"))
+        completion = usage.get("completion_tokens", usage.get("candidatesTokenCount"))
+        if prompt is None or completion is None:
+            return
+        self.prompt_tokens = (self.prompt_tokens or 0) + int(prompt)
+        self.completion_tokens = (self.completion_tokens or 0) + int(completion)
+        self.available = True
+        self.source = source
 
 
 @dataclass
@@ -46,8 +54,8 @@ class RunTelemetry:
         self.stages_ms[stage] = round(self.stages_ms.get(stage, 0.0) + elapsed, 2)
         return elapsed
 
-    def add_usage(self, usage: dict[str, Any] | None) -> None:
-        self.usage.add(usage)
+    def add_usage(self, usage: dict[str, Any] | None, source: str = "provider") -> None:
+        self.usage.add(usage, source)
 
     def add_repair(self) -> None:
         self.repair_count += 1

@@ -40,8 +40,8 @@ def evaluate_manifest(manifest_path: Path) -> list[dict[str, Any]]:
             "run_id": manifest.get("run_id", "unknown"),
             "payloads": (manifest.get("artifacts") or {}).get("payloads"),
             "findings": (manifest.get("artifacts") or {}).get("findings"),
-            "runtime_seconds": (manifest.get("runtime_ms") or {}).get("total", 0) / 1000,
-            "llm_tokens": (manifest.get("generation") or {}).get("total_tokens", 0),
+            "runtime_seconds": (manifest.get("runtime") or {}).get("total_ms", 0) / 1000,
+            "llm_tokens": (manifest.get("llm") or {}).get("total_tokens"),
         }]
     rows: list[dict[str, Any]] = []
     for run in runs:

@@ -60,7 +60,7 @@ def test_evaluate_manifest_reads_single_pipeline_manifest(tmp_path):
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({
         "run_id": "run-1", "target": {"name": "vampi"},
-        "runtime_ms": {"total": 2500}, "generation": {"total_tokens": 12},
+        "runtime": {"total_ms": 2500}, "llm": {"total_tokens": 12},
         "artifacts": {"payloads": str(payloads), "findings": str(findings)},
     }), encoding="utf-8")
 
