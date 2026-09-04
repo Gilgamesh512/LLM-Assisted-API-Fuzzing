@@ -26,7 +26,7 @@ PROVIDERS_FIXTURE = {
         "key_env_var": "DEEPSEEK_API_KEY",
     },
     "gemini": {
-        "env": {"MODEL": "gemini-2.5-flash", "BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/"},
+        "env": {"MODEL": "gemini-3.7-flash", "BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/"},
         "thinkingEnabled": False,
         "key_env_var": "GEMINI_API_KEY",
     },
@@ -65,7 +65,7 @@ def test_switch_to_gemini_writes_project_and_user_settings(tmp_path: Path):
     sw.switch_to("gemini")
 
     project = json.loads(sw.PROJECT_SETTINGS_PATH.read_text(encoding="utf-8"))
-    assert project["env"]["MODEL"] == "gemini-2.5-flash"
+    assert project["env"]["MODEL"] == "gemini-3.7-flash"
     assert project["env"]["BASE_URL"] == "https://generativelanguage.googleapis.com/v1beta/openai/"
     assert project["thinkingEnabled"] is False
     assert "reasoningEffort" not in project
@@ -84,7 +84,7 @@ def test_switch_preserves_existing_project_settings_fields(tmp_path: Path):
 
     project = json.loads(sw.PROJECT_SETTINGS_PATH.read_text(encoding="utf-8"))
     assert project["enabledSkills"] == {"api-payload-generator": True}
-    assert project["env"]["MODEL"] == "gemini-2.5-flash"
+    assert project["env"]["MODEL"] == "gemini-3.7-flash"
 
 
 def test_switching_back_and_forth_updates_reasoning_effort(tmp_path: Path):

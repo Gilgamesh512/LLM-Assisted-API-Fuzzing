@@ -60,6 +60,11 @@ def test_call_gemini_success_parses_reply():
     assert result["model"] == gc.DEFAULT_MODEL
     assert result["usage"] == {"totalTokenCount": 42}
     assert result["latency_seconds"] >= 0
+    body = mock_post.call_args.kwargs["json"]
+    assert body["generationConfig"] == {
+        "temperature": 0.2,
+        "responseMimeType": "application/json",
+    }
     called_url = mock_post.call_args.args[0]
     assert called_url == f"https://generativelanguage.googleapis.com/v1beta/models/{gc.DEFAULT_MODEL}:generateContent"
     assert mock_post.call_args.kwargs["params"] == {"key": "k"}

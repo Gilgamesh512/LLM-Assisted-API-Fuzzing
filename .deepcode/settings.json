@@ -1,6 +1,6 @@
 {
   "env": {
-    "MODEL": "gemini-2.5-flash",
+    "MODEL": "gemini-3.7-flash",
     "BASE_URL": "https://generativelanguage.googleapis.com/v1beta/openai/"
   },
   "thinkingEnabled": false,

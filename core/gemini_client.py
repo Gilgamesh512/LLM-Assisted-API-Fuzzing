@@ -40,9 +40,7 @@ from typing import Any
 import requests
 
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-# gemini-flash-lite-latest: model mặc định đã xác nhận hoạt động ổn định
-# (không bị 429 quota) trong dự án cá nhân khác của người dùng.
-DEFAULT_MODEL = "gemini-flash-lite-latest"
+DEFAULT_MODEL = "gemini-3.7-flash"
 DEFAULT_TIMEOUT_SECONDS = 60
 
 DOTENV_PATH = Path(__file__).resolve().parent.parent / ".env"
@@ -113,9 +111,25 @@ def call_gemini(
     """
     key = resolve_api_key(api_key)
 
-    body: dict[str, Any] = {"contents": [{"parts": [{"text": prompt}]}]}
+    body: dict[str, Any] = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "temperature": 0.2,
+            "responseMimeType": "application/json",
+        },
+    }
     if system_prompt:
-        body["systemInstruction"] = {"parts": [{"text": system_prompt}]}
+        body["systemInstruction"] = {
+            "parts": [
+                {"text": system_prompt}
+            ]
+        }
 
     url = f"{base_url.rstrip('/')}/models/{model}:generateContent"
 

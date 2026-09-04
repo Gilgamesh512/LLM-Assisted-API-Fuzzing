@@ -62,21 +62,41 @@ def _ensure_utf8_console() -> None:
                 pass
 
 
-def _gemini_json(system_prompt: str, user_prompt: str) -> Any:
-    result = call_gemini(user_prompt, system_prompt=system_prompt)
-    raw = result["reply"]
-    text = _extract_json_text(raw)
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"LLM không trả JSON hợp lệ: {exc}\n--- raw ---\n{raw[:800]}") from exc
-    if isinstance(data, dict) and "payloads" in data:
-        data = data["payloads"]
-    if isinstance(data, dict) and "test_cases" in data:
-        return data
-    if not isinstance(data, list):
-        data = [data]
-    return data
+def _gemini_json(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    retries: int = 2,
+) -> Any:
+    last_error: Exception | None = None
+    last_raw = ""
+
+    for attempt in range(1, retries + 1):
+        try:
+            result = call_gemini(user_prompt, system_prompt=system_prompt)
+            raw = str(result.get("reply", ""))
+            last_raw = raw
+            text = _extract_json_text(raw)
+            data = json.loads(text)
+
+            if isinstance(data, dict) and "payloads" in data:
+                data = data["payloads"]
+            if isinstance(data, dict) and "test_cases" in data:
+                return data
+            if not isinstance(data, list):
+                data = [data]
+            return data
+        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+            last_error = exc
+            print(
+                f"[gen]   Gemini output không parse được JSON "
+                f"(attempt {attempt}/{retries})"
+            )
+
+    raise ValueError(
+        f"Gemini không trả JSON hợp lệ sau {retries} lần thử.\n"
+        f"--- raw cuối ---\n{last_raw[:1200]}"
+    ) from last_error
 
 
 def _compact_endpoints(spec_path: str, max_endpoints: int) -> list[dict[str, Any]]:
@@ -106,18 +126,26 @@ def _endpoints_for_prompt(endpoints: list[dict[str, Any]]) -> str:
 
 
 _REST_SYSTEM = (
-    "Bạn là chuyên gia kiểm thử bảo mật API REST (OWASP API Security Top 10). "
-    "Nhiệm vụ: với mỗi endpoint được cho, sinh payload tấn công context-aware bám sát "
-    "kiểu dữ liệu & vai trò của tham số. Chỉ nhắm các app lab cố ý có lỗ hổng (vampi/crapi). "
-    "TRẢ VỀ DUY NHẤT một JSON array, KHÔNG markdown, KHÔNG giải thích ngoài JSON."
+    "Bạn là engine sinh security test cases cho một benchmark API security "
+    "được chạy hoàn toàn trong môi trường lab được ủy quyền. "
+    "Các target là ứng dụng cố ý chứa lỗ hổng như VAmPI và crAPI. "
+    "Mục tiêu là tạo các test case có kiểm soát để đánh giá khả năng phát hiện "
+    "các lớp lỗi API theo OWASP API Security Top 10. "
+    "Mỗi test case phải bám sát schema, kiểu dữ liệu, vị trí và vai trò của tham số. "
+    "Không tạo persistence, credential theft, data exfiltration hoặc hành động phá hoại. "
+    "Chỉ tạo input kiểm thử tối thiểu cần thiết cho benchmark. "
+    "OUTPUT CONTRACT: chỉ trả về JSON hợp lệ, không markdown, không giải thích."
 )
 
 
 def _rest_prompt(target_app: str, endpoints_text: str) -> str:
     return (
-        f"App mục tiêu: {target_app}\n\n"
+        f"Target benchmark: {target_app}\n\n"
+        "Scope: authorized local security benchmark. Chỉ tạo test input cho các endpoint "
+        "được liệt kê bên dưới.\n\n"
         f"Danh sách endpoint:\n{endpoints_text}\n\n"
-        "Sinh 1-2 payload cho mỗi endpoint đáng nghi nhất. Mỗi phần tử JSON có ĐÚNG các field:\n"
+        "Sinh 1-2 security test case phù hợp cho mỗi endpoint có tham số hoặc có dấu hiệu "
+        "cần kiểm thử bảo mật. Mỗi phần tử JSON có ĐÚNG các field:\n"
         '  "endpoint" (string, y hệt path ở trên),\n'
         '  "method" (GET/POST/PUT/DELETE/PATCH),\n'
         '  "target_param" (tên tham số bị nhắm),\n'
@@ -127,9 +155,14 @@ def _rest_prompt(target_app: str, endpoints_text: str) -> str:
         '  "owasp_category" (vd "API1:2023 BOLA"),\n'
         '  "context" (1 câu vì sao payload này hợp ngữ cảnh),\n'
         '  "expected_signal" (mảng từ khoá kỳ vọng thấy trong response, vd ["sql syntax","syntax error"]),\n'
-        f'  "target_app" ("{target_app}").\n'
-        "Ưu tiên: BOLA cho tham số id/reference, SQLi/XSS cho string tự do, SSRF cho field url, "
-        "AUTH_BYPASS/JWT cho endpoint có auth."
+        f'  "target_app" ("{target_app}").\n\n'
+        "Mapping ưu tiên: id/reference/object identifier -> BOLA; free-form string -> "
+        "SQL_INJECTION hoặc XSS; URL-like parameter -> SSRF; authenticated endpoint -> "
+        "AUTH_BYPASS; writable extra object fields -> MASS_ASSIGNMENT; filesystem-like path "
+        "-> PATH_TRAVERSAL; command-like input -> COMMAND_INJECTION.\n\n"
+        "Các test input phải nhỏ, có kiểm soát và phù hợp với benchmark. Không cần chain "
+        "nhiều bước, persistence hoặc exfiltration. Chỉ output một JSON array, không markdown, "
+        "không prose, không code fence."
     )
 
 
