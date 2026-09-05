@@ -1,16 +1,16 @@
-### Chạy chay ###
-# Nhớ source ~/fuzzenv/bin/activate mỗi lần mở terminal mới trước khi chạy script
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
+### Dry run (individual commands) ###
+# Remember to `source .venv/bin/activate` every time you open a new terminal, before running any script
+cd ~/LLM-Assisted-API-Fuzzing
+source .venv/bin/activate
 ls
 
 
-# Cấp quyền thực thi
-cd ~/fuzzing-tool/main_pipeline
+# Make scripts executable
+cd ~/LLM-Assisted-API-Fuzzing/Schemathesis
 chmod +x run_all.py start_lab.py run_auth.py run_dvga.py \
          run_schemathesis1.py run_graphql_fuzz1.py rules_engine.py run_security_tests.py
 
-# Cập nhật CVE mới nhất (chạy định kỳ, vd cron 1 lần/tuần) - cần internet thật
+# Refresh the CVE cache (run periodically, e.g. once a week via cron) - requires real internet access
 python3 rules_engine.py --update --rules rules.json --days 30
 
 
@@ -29,42 +29,42 @@ export FUZZ_AUTH_HEADER=$CRAPI_AUTH_HEADER
 python3 run_schemathesis1.py \
   --targets "crapi=crapi_spec.yaml" \
   --base-urls "crapi=http://localhost:8888" \
-  --payloads payload_crapi.json \   
+  --payloads payload_crapi.json \
   --rules rules.json \
   --concurrency 5
 
 
 # GraphQL: DVGA
 export FUZZ_AUTH_HEADER=$DVGA_AUTH_HEADER
-python3 run_graphql_fuzz.py \
+python3 run_graphql_fuzz1.py \
   --base-url http://localhost:5013 \
   --payloads payload_graphql.json \
   --rules rules.json \
   --concurrency 5
 
-# Xem kết quả
+# View results
 cat results/vulnerabilities.csv
 cat results/vulnerabilities.ndjson
 
 
-### Chạy Pipeline ###
-# Nhớ source ~/fuzzenv/bin/activate mỗi lần mở terminal mới trước khi chạy script
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
+### Run the pipeline ###
+# Remember to `source .venv/bin/activate` every time you open a new terminal, before running any script
+cd ~/LLM-Assisted-API-Fuzzing
+source .venv/bin/activate
 
 
-# Cách 1 — Chỉ chạy fuzzing (khi lab đã chạy sẵn + token còn hạn)
-cd ~/fuzzing-tool
-python3 main_pipeline/run_security_tests.py
+# Option 1 — Fuzzing only (lab already running + tokens still valid)
+cd ~/LLM-Assisted-API-Fuzzing
+python3 Schemathesis/run_security_tests.py
 
 
-# Cách 2 — Lấy 3 token trước, rồi mới fuzz (lab đã chạy sẵn, chỉ token hết hạn)
-cd ~/fuzzing-tool
-python3 main_pipeline/run_auth.py      # lấy VAMPI_AUTH_HEADER + CRAPI_AUTH_HEADER -> tokens.env
-python3 main_pipeline/run_dvga.py      # lấy DVGA_AUTH_HEADER + dvga_schema.json  -> tokens.env
-python3 main_pipeline/run_security_tests.py
+# Option 2 — Fetch all 3 tokens first, then fuzz (lab already running, only tokens expired)
+cd ~/LLM-Assisted-API-Fuzzing
+python3 Schemathesis/run_auth.py      # gets VAMPI_AUTH_HEADER + CRAPI_AUTH_HEADER -> tokens.env
+python3 Schemathesis/run_dvga.py      # gets DVGA_AUTH_HEADER + dvga_schema.json  -> tokens.env
+python3 Schemathesis/run_security_tests.py
 
 
-# Cách 3 — Chạy hết từ đầu đến cuối, 1 lệnh duy nhất
-cd ~/fuzzing-tool
-python3 main_pipeline/run_all.py
+# Option 3 — Run everything end to end, single command
+cd ~/LLM-Assisted-API-Fuzzing
+python3 Schemathesis/run_all.py

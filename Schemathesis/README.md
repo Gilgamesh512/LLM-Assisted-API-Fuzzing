@@ -65,7 +65,7 @@ VAmPI and crAPI are started with Docker Compose. DVGA is built into a Docker ima
 ## Project structure
 
 ```text
-main_pipeline/
+Schemathesis/
 ├── run_all.py
 ├── start_lab.py
 ├── run_auth.py
@@ -99,17 +99,21 @@ main_pipeline/
 
 ## Requirements
 
-Use the project's Python virtual environment before running the pipeline:
+Use the project's Python virtual environment before running the pipeline. From the repository root:
 
 ```bash
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
+cd ~/LLM-Assisted-API-Fuzzing
+
+# first time only
+python3 -m venv .venv
+
+source .venv/bin/activate
 ```
 
-The fuzzers require the following Python packages:
+Install the fuzzer's dependencies from its own requirements file:
 
 ```bash
-pip install schemathesis pydantic httpx pyyaml requests
+pip install -r Schemathesis/requirements.txt
 ```
 
 The lab also requires Docker/Docker Compose and the three target applications at the paths expected by `start_lab.py`.
@@ -121,10 +125,10 @@ The lab also requires Docker/Docker Compose and the three target applications at
 From the project root:
 
 ```bash
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
+cd ~/LLM-Assisted-API-Fuzzing
+source .venv/bin/activate
 
-python3 main_pipeline/run_all.py
+python3 Schemathesis/run_all.py
 ```
 
 This is the recommended execution path.
@@ -139,17 +143,17 @@ It performs:
 6. Save the DVGA schema.
 7. Validate the authentication/schema handoff.
 8. Run the main REST and GraphQL fuzzers.
-9. Write the results under `main_pipeline/results/`.
+9. Write the results under `Schemathesis/results/`.
 
 ## Run individual stages
 
 ### Start the target lab
 
 ```bash
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
+cd ~/LLM-Assisted-API-Fuzzing
+source .venv/bin/activate
 
-python3 main_pipeline/start_lab.py
+python3 Schemathesis/start_lab.py
 ```
 
 This starts:
@@ -161,13 +165,13 @@ This starts:
 ### Authenticate VAmPI + crAPI
 
 ```bash
-python3 main_pipeline/run_auth.py
+python3 Schemathesis/run_auth.py
 ```
 
 The script creates/logs into the configured test accounts and writes:
 
 ```text
-main_pipeline/tokens.env
+Schemathesis/tokens.env
 ```
 
 with:
@@ -182,7 +186,7 @@ The file is written with restrictive permissions where supported.
 ### Authenticate + discover DVGA
 
 ```bash
-python3 main_pipeline/run_dvga.py
+python3 Schemathesis/run_dvga.py
 ```
 
 This stage:
@@ -201,7 +205,7 @@ The generated schema contains both the raw introspection result and a short anal
 If the lab is already running and the authentication artifacts are still valid:
 
 ```bash
-python3 main_pipeline/run_security_tests.py
+python3 Schemathesis/run_security_tests.py
 ```
 
 This runs:
@@ -235,24 +239,24 @@ The runner uses:
 Example VAmPI execution:
 
 ```bash
-python3 main_pipeline/run_schemathesis1.py \
-  --targets "vampi=main_pipeline/vampi_spec.yaml" \
+python3 Schemathesis/run_schemathesis1.py \
+  --targets "vampi=Schemathesis/vampi_spec.yaml" \
   --base-urls "vampi=http://localhost:5002" \
-  --payloads main_pipeline/payload_rest.json \
-  --rules rules.json \
-  --results-dir main_pipeline/results \
+  --payloads Schemathesis/payload_rest.json \
+  --rules Schemathesis/rules.json \
+  --results-dir Schemathesis/results \
   --concurrency 3
 ```
 
 Example crAPI execution:
 
 ```bash
-python3 main_pipeline/run_schemathesis1.py \
-  --targets "crapi=main_pipeline/crapi_openapi_spec.json" \
+python3 Schemathesis/run_schemathesis1.py \
+  --targets "crapi=Schemathesis/crapi_openapi_spec.json" \
   --base-urls "crapi=http://localhost:8888" \
-  --payloads main_pipeline/payload_crapi.json \
-  --rules rules.json \
-  --results-dir main_pipeline/results \
+  --payloads Schemathesis/payload_crapi.json \
+  --rules Schemathesis/rules.json \
+  --results-dir Schemathesis/results \
   --concurrency 3
 ```
 
@@ -265,11 +269,11 @@ Authentication is normally injected by `run_security_tests.py` from `tokens.env`
 Example:
 
 ```bash
-python3 main_pipeline/run_graphql_fuzz1.py \
+python3 Schemathesis/run_graphql_fuzz1.py \
   --base-url http://localhost:5013 \
-  --payloads main_pipeline/payload_graphql.json \
-  --rules rules.json \
-  --results-dir main_pipeline/results \
+  --payloads Schemathesis/payload_graphql.json \
+  --rules Schemathesis/rules.json \
+  --results-dir Schemathesis/results \
   --concurrency 3
 ```
 
@@ -298,7 +302,7 @@ or the script's `--auth-header` option.
 The Main pipeline uses one shared handoff file:
 
 ```text
-main_pipeline/tokens.env
+Schemathesis/tokens.env
 ```
 
 Expected authentication headers:
@@ -342,24 +346,24 @@ run_security_tests.py
 To inspect the current rule state:
 
 ```bash
-python3 main_pipeline/rules_engine.py --rules rules.json
+python3 Schemathesis/rules_engine.py --rules Schemathesis/rules.json
 ```
 
 To update the CVE cache from the NVD API:
 
 ```bash
-python3 main_pipeline/rules_engine.py \
+python3 Schemathesis/rules_engine.py \
   --update \
-  --rules rules.json \
+  --rules Schemathesis/rules.json \
   --days 30
 ```
 
 For example, using an NVD API key:
 
 ```bash
-python3 main_pipeline/rules_engine.py \
+python3 Schemathesis/rules_engine.py \
   --update \
-  --rules rules.json \
+  --rules Schemathesis/rules.json \
   --days 90 \
   --api-key <NVD_API_KEY>
 ```
@@ -383,7 +387,7 @@ CVE matches are contextual signals. A CVE keyword match is **not** by itself pro
 The main pipeline writes results to:
 
 ```text
-main_pipeline/results/
+Schemathesis/results/
 ```
 
 ### `vulnerabilities.csv`
@@ -508,39 +512,39 @@ Do not point the fuzzers at systems you do not have explicit authorization to te
 ### Full run
 
 ```bash
-cd ~/fuzzing-tool
-source ~/fuzzenv/bin/activate
-python3 main_pipeline/run_all.py
+cd ~/LLM-Assisted-API-Fuzzing
+source .venv/bin/activate
+python3 Schemathesis/run_all.py
 ```
 
 ### Refresh tokens + schema, then fuzz
 
 ```bash
-python3 main_pipeline/run_auth.py
-python3 main_pipeline/run_dvga.py
-python3 main_pipeline/run_security_tests.py
+python3 Schemathesis/run_auth.py
+python3 Schemathesis/run_dvga.py
+python3 Schemathesis/run_security_tests.py
 ```
 
 ### Fuzz only
 
 ```bash
-python3 main_pipeline/run_security_tests.py
+python3 Schemathesis/run_security_tests.py
 ```
 
 ### Update CVE rules
 
 ```bash
-python3 main_pipeline/rules_engine.py \
+python3 Schemathesis/rules_engine.py \
   --update \
-  --rules rules.json \
+  --rules Schemathesis/rules.json \
   --days 30
 ```
 
 ### View results
 
 ```bash
-cat main_pipeline/results/vulnerabilities.csv
-cat main_pipeline/results/vulnerabilities.ndjson
+cat Schemathesis/results/vulnerabilities.csv
+cat Schemathesis/results/vulnerabilities.ndjson
 ```
 
 ## Legacy pipeline
