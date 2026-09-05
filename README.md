@@ -1,291 +1,481 @@
-# LLM-API-Fuzzer
+# LLM-Assisted API Fuzzing
 
-Pipeline nghiên cứu kiểm thử bảo mật API bằng fuzzing có LLM hỗ trợ. Hệ thống
-đọc OpenAPI/Swagger hoặc GraphQL introspection, sinh test case context-aware,
-validate output, chạy fuzzing trên các ứng dụng lab cố ý có lỗ hổng và tổng hợp
-kết quả.
+LLM-assisted API security testing pipeline with context-aware payload generation, schema validation, repair, runtime feedback, Nuclei execution, result normalization, and reproducible experiment evaluation.
 
-Phạm vi benchmark hiện tại gồm **VAmPI**, **crAPI** và **DVGA** chạy cục bộ.
-Chỉ sử dụng pipeline với hệ thống bạn sở hữu hoặc được phép kiểm thử.
+> **Scope:** The default benchmark targets are VAmPI, crAPI, and DVGA running locally. Use the pipeline only against systems you own or are explicitly authorized to test.
 
-## Pipeline
+## 1. Current Architecture
+
+The repository contains several cooperating execution paths. They are related, but they are **not one single command chain**.
 
 ```text
-Target lab (Docker)
-    |
-    +--> VAmPI REST :5002
-    +--> crAPI REST :8888
-    +--> DVGA GraphQL :5013
-             |
-             v
-Authentication + schema discovery
-    |
-    +--> Schemathesis/run_auth.py  -> tokens.env
-    +--> Schemathesis/run_dvga.py  -> DVGA token + dvga_schema.json
-             |
-             v
-Payload generation
-    |
-    +--> scripts/gen_payloads.py
-    |       +--> payload_rest.json
-    |       +--> payload_crapi.json
-    |       +--> payload_graphql.json
-    |       +--> Nuclei/executor/benchmark/suite.json
-    |
-    +--> scripts/run_pipeline.py
-            +--> OpenAPI analyzer
-            +--> api-payload-generator skill
-            +--> Pydantic validator + repair loop
-             |
-             v
-Security testing
-    |
-    +--> Schemathesis REST + GraphQL
-    +--> Nuclei API executor
-             |
-             v
-Results
-    +--> scripts/aggregate_results.py
-            +--> results/findings_summary.csv
-            +--> results/findings_summary.ndjson
+                         ┌─────────────────────────────┐
+                         │       Target Lab            │
+                         │ VAmPI :5002                 │
+                         │ crAPI :8888                 │
+                         │ DVGA :5013/graphql         │
+                         └──────────────┬──────────────┘
+                                        │
+                          auth + schema │
+                                        ▼
+                         ┌─────────────────────────────┐
+                         │ Schemathesis preparation    │
+                         │ run_auth.py                 │
+                         │ run_dvga.py                 │
+                         └──────────────┬──────────────┘
+                                        │
+                                        ▼
+        ┌────────────────────────────────────────────────────────┐
+        │                  Payload generation                    │
+        │                                                        │
+        │ A. DeepCode Task-B pipeline                            │
+        │    analyzer -> api-payload-generator -> validator      │
+        │    -> repair -> validated REST payloads                │
+        │                                                        │
+        │ B. Gemini benchmark generator                          │
+        │    REST + GraphQL + Nuclei suite generation            │
+        └───────────────────────────┬────────────────────────────┘
+                                    │
+                                    ▼
+        ┌────────────────────────────────────────────────────────┐
+        │                    Security testing                    │
+        │ Schemathesis REST/GraphQL + Nuclei executor             │
+        └───────────────────────────┬────────────────────────────┘
+                                    │
+                                    ▼
+        ┌────────────────────────────────────────────────────────┐
+        │ Results / evaluation                                   │
+        │ raw findings -> normalization -> dedup -> summary       │
+        │ baseline / security gate / experiment metrics            │
+        └────────────────────────────────────────────────────────┘
 ```
 
-## Targets
+The repository's current target configuration is centralized in `config/targets.yaml`. It declares VAmPI, crAPI, and DVGA, their base URLs, specs, payload outputs, and authentication metadata.
 
-| Target | Protocol | Base URL | Fuzzing component |
-|---|---|---|---|
-| VAmPI | REST | `http://localhost:5002` | Schemathesis |
-| crAPI | REST | `http://localhost:8888` | Schemathesis |
-| DVGA | GraphQL | `http://localhost:5013/graphql` | Schemathesis GraphQL |
-| VAmPI | REST | `http://localhost:5002` | Nuclei |
-
-Target configuration nằm trong [`config/targets.yaml`](config/targets.yaml).
-Các spec benchmark được lưu trong `dataset/` và `Schemathesis/`.
-
-## Cấu trúc thư mục
+## 2. Repository Layout
 
 ```text
-LLM Assisted API Fuzzing/
+LLM-Assisted-API-Fuzzing/
 ├── core/
-│   ├── analyzer.py          # Parse OpenAPI/Swagger
-│   ├── validator.py         # Validate payload LLM bằng Pydantic
-│   ├── gemini_client.py     # Gemini provider
-│   ├── deepseek_client.py   # DeepSeek provider
-│   └── feedback_loop.py     # Feedback từ runtime
+│   ├── analyzer.py
+│   ├── authorization.py
+│   ├── baseline.py
+│   ├── deepseek_client.py
+│   ├── evaluation.py
+│   ├── feedback_loop.py
+│   ├── finding.py
+│   ├── gemini_client.py
+│   ├── manifest.py
+│   ├── oracle.py
+│   ├── security_checks.py
+│   ├── target_config.py
+│   ├── telemetry.py
+│   └── validator.py
+│
 ├── scripts/
-│   ├── run_pipeline.py      # B1 -> B4 trong một lệnh
-│   ├── gen_payloads.py      # Sinh payload cho Schemathesis/Nuclei
-│   ├── aggregate_results.py # Chuẩn hóa và gộp findings
-│   └── switch_ai.py         # Chuyển provider LLM
-├── Schemathesis/            # REST/GraphQL fuzzing runners
-├── Nuclei/executor/         # Nuclei API executor
-├── lab/                     # Docker Compose cho ba target
-├── dataset/                 # Spec, inventory và benchmark data
-├── baseline/                # Kết quả baseline
-├── results/                 # Findings và runtime artifacts
-├── tests/                   # Unit/integration tests
-├── docs/                    # Usage, reports và evidence
-└── Aegis Agent/             # Source DeepCode CLI, tùy chọn cho B2/B3
+│   ├── run_pipeline.py
+│   ├── gen_payloads.py
+│   ├── run_feedback_loop.py
+│   ├── aggregate_results.py
+│   ├── evaluate_experiment.py
+│   ├── security_gate.py
+│   └── switch_ai.py
+│
+├── Schemathesis/
+│   ├── run_security_tests.py
+│   ├── run_schemathesis1.py
+│   ├── run_graphql_fuzz1.py
+│   ├── run_auth.py
+│   ├── run_dvga.py
+│   ├── rules_engine.py
+│   ├── rules.json
+│   ├── payload_rest.json
+│   ├── payload_crapi.json
+│   ├── payload_graphql.json
+│   └── results/
+│
+├── Nuclei/
+│   └── executor/
+│       ├── run_nuclei.py
+│       ├── nuclei_runner.py
+│       ├── schemas.py
+│       ├── template_builder.py
+│       └── benchmark/
+│
+├── lab/
+│   ├── lab.sh
+│   ├── docker-compose.yml
+│   └── crapi-compose.yml
+│
+├── dataset/
+├── baseline/
+├── results/
+├── config/
+├── docs/
+├── tests/
+└── Aegis Agent/
 ```
 
-`tokens.env`, `context.json`, `dvga_schema.json` và dữ liệu trong `results/` là
-artifact runtime. Không commit token hoặc response có dữ liệu nhạy cảm.
+`Aegis Agent/` is the local DeepCode CLI source used by the Task-B integration. It is not the fuzzing engine itself.
 
-## Requirements
+## 3. Requirements
 
-- Python **3.11-3.13**. Python 3.14 hiện chưa được hỗ trợ ổn định bởi một số
-  dependency của Schemathesis/Pydantic.
-- Docker và Docker Compose plugin để chạy target lab.
-- `nuclei` binary trong `PATH` nếu chạy Nuclei.
-- Node.js và DeepCode CLI nếu dùng `scripts/run_pipeline.py`.
-- Gemini API key hoặc cấu hình DeepSeek. Không lưu API key trong repository.
+### Base environment
 
-Cài dependency Python:
+- Python 3.11-3.13
+- Docker
+- Docker Compose plugin (`docker compose`)
+- `curl`
+- `nuclei` in `PATH` when using the Nuclei executor
+- Node.js/npm when rebuilding the bundled DeepCode CLI
+- DeepCode CLI when using `scripts/run_pipeline.py`
+- An LLM provider credential for LLM generation
+
+Install Python dependencies:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install -r Schemathesis/requirements.txt
+python -m pip install -r Nuclei/executor/requirements.txt
 ```
 
-Trên Windows, có thể chạy các script Python bằng PowerShell như trên. `lab.sh`
-là script Bash; dùng WSL/Git Bash hoặc chạy Docker Compose tương đương trong
-[`lab/docker-compose.yml`](lab/docker-compose.yml) và compose file của crAPI.
+Run tests:
 
-## Quick start
+```bash
+python -m pytest tests/ -v
+```
 
-### 1. Start target lab
+## 4. Target Lab
 
-Linux, WSL hoặc Git Bash:
+Start the complete local lab:
 
 ```bash
 bash lab/lab.sh up
 bash lab/lab.sh status
 ```
 
-Các target được expose ở port `5002`, `8888` và `5013`. Xem thêm
-[`lab/README.md`](lab/README.md).
-
-### 2. Generate payloads
-
-Tạo `.env` ở project root nếu dùng Gemini:
+Stop it:
 
 ```bash
-echo 'GEMINI_API_KEY=<your-key>' > .env
+bash lab/lab.sh down
 ```
 
-Sinh và validate bốn nhóm output cho benchmark:
+The lab launcher starts VAmPI and DVGA from `lab/docker-compose.yml` and downloads/starts the official crAPI compose stack when available.
 
-```bash
-python scripts/gen_payloads.py
-```
+Expected endpoints:
 
-Có thể giới hạn nhóm hoặc target:
+| Target | Protocol | Base URL |
+|---|---|---|
+| VAmPI | REST | `http://localhost:5002` |
+| crAPI | REST | `http://localhost:8888` |
+| DVGA | GraphQL | `http://localhost:5013/graphql` |
 
-```bash
-python scripts/gen_payloads.py --only rest
-python scripts/gen_payloads.py --only graphql
-python scripts/gen_payloads.py --target vampi
-python scripts/gen_payloads.py --max-endpoints 30
-```
+The lab uses intentionally vulnerable applications and should remain isolated from production networks.
 
-### 3. Obtain authentication and schema
+## 5. Authentication and Schema Preparation
+
+After the lab is running:
 
 ```bash
 python Schemathesis/run_auth.py
 python Schemathesis/run_dvga.py
 ```
 
-Hai lệnh này tạo/cập nhật `tokens.env`; bước DVGA còn tạo
-`Schemathesis/dvga_schema.json` hoặc artifact schema theo cấu hình runner.
+These stages create/update:
 
-### 4. Run fuzzing
+```text
+Schemathesis/tokens.env
+Schemathesis/dvga_schema.json
+```
+
+`tokens.env` may contain bearer tokens and must not be committed or printed to shared logs.
+
+## 6. Standard Security-Test Pipeline
+
+The normal Schemathesis security-test controller is:
 
 ```bash
 python Schemathesis/run_security_tests.py
 ```
 
-Chạy Nuclei từ đúng thư mục executor:
-
-```bash
-cd Nuclei/executor
-python -m executor.run_nuclei \
-  --input benchmark/suite.json \
-  --export-dir ../../results/nuclei
-cd ../..
-```
-
-### 5. Aggregate results
-
-```bash
-python scripts/aggregate_results.py
-```
-
-Output chính:
+It resolves the current payload corpora, specs, rules, and authentication handoff, then runs:
 
 ```text
-results/findings_summary.csv    # Dùng để đọc/phân tích bằng Excel
-results/findings_summary.ndjson # Dùng cho xử lý tự động
+VAmPI REST
+   ↓
+crAPI REST
+   ↓
+DVGA GraphQL
 ```
 
-## Run the LLM pipeline
+The controller writes its detailed findings to:
 
-Để chạy riêng Task B từ spec đến payload đã validate:
+```text
+Schemathesis/results/
+├── vulnerabilities.csv
+├── vulnerabilities.ndjson
+├── experiment_runs.csv
+├── state.json
+└── state_graphql.json
+```
+
+This controller does **not** run Nuclei and does **not** automatically generate new LLM payloads.
+
+## 7. LLM Payload Generation — DeepCode Task-B Pipeline
+
+`scripts/run_pipeline.py` implements the REST-oriented B1-B4 flow:
+
+```text
+OpenAPI/Swagger
+      ↓
+B1: core/analyzer.py
+      ↓
+context.json
+      ↓
+B2/B3: DeepCode skill api-payload-generator
+      ↓
+raw LLM output
+      ↓
+B4: core/validator.py
+      ↓
+repair loop (up to 3 attempts)
+      ↓
+validated payload JSON
+      ↓
+run manifest
+```
+
+Example:
 
 ```bash
 python scripts/run_pipeline.py path/to/openapi.yaml
+```
+
+Custom output:
+
+```bash
 python scripts/run_pipeline.py path/to/openapi.yaml \
-  --provider gemini \
   --output payloads_validated.json
 ```
 
-Pipeline thực hiện:
-
-1. Parse spec bằng `core/analyzer.py` thành `context.json`.
-2. Gọi skill built-in `api-payload-generator` qua DeepCode.
-3. Validate JSON bằng `core/validator.py`.
-4. Tự sửa output tối đa `MAX_REPAIR_ATTEMPTS` lần.
-5. Ghi danh sách payload hợp lệ cho fuzzing engine.
-
-Mỗi lần chạy thành công cũng ghi run manifest tại
-`results/runs/<run_id>/manifest.json`. Manifest chứa `run_id`, target, provider,
-model, payload count, repair telemetry (`attempts`, `initial_valid`,
-`final_valid`, `successful`) và runtime theo stage: analyzer, LLM generation,
-validation, repair và total. Có thể chỉ định đường dẫn riêng bằng
-`--manifest path/to/run_manifest.json` hoặc model metadata bằng `--model`.
-
-Khi pipeline gọi DeepCode qua subprocess, DeepCode hiện chỉ trả nội dung stdout
-nên token usage không thể suy ra chính xác; manifest ghi `0` cho token cho đến
-khi tầng provider/DeepCode expose usage metadata. Không dùng thời gian chạy để
-ước lượng token.
-
-DeepCode CLI được build từ source trong `Aegis Agent/`. Cài/build khi cần:
+Provider selection:
 
 ```bash
-cd "Aegis Agent"
-npm install
-npm run build
-cd ..
+python scripts/run_pipeline.py path/to/openapi.yaml \
+  --provider gemini
 ```
 
-Xem hướng dẫn chi tiết về Task B trong [`docs/USAGE.md`](docs/USAGE.md).
+The current implementation calls the DeepCode CLI through Node with `shell=False`. This is intentional: generated payload text is passed as an argument rather than through a shell command.
 
-## Run individual fuzzers
+A successful run creates:
 
-REST runner nhận spec, payload corpus, rules và thư mục kết quả:
+```text
+context.json
+payloads_validated.json
+results/runs/<run_id>/manifest.json
+```
+
+The validator uses a strict Pydantic contract. Invalid JSON/schema output is repaired automatically and the pipeline stops after the configured maximum of three attempts.
+
+**Important:** this pipeline generates and validates payloads; it does not automatically execute the Schemathesis or Nuclei fuzzers.
+
+## 8. LLM Payload Generation — Benchmark Generator
+
+`scripts/gen_payloads.py` is a separate generator designed for the benchmark corpus.
+
+It can generate:
+
+```text
+REST payloads
+GraphQL payloads
+Nuclei test suites
+```
+
+Examples:
 
 ```bash
-python Schemathesis/run_schemathesis1.py \
-  --targets "vampi=Schemathesis/vampi_spec.yaml" \
-  --base-urls "vampi=http://localhost:5002" \
-  --payloads Schemathesis/payload_rest.json \
-  --rules Schemathesis/rules.json \
-  --results-dir Schemathesis/results
+python scripts/gen_payloads.py
+python scripts/gen_payloads.py --only rest
+python scripts/gen_payloads.py --only graphql
+python scripts/gen_payloads.py --target vampi
+python scripts/gen_payloads.py --max-endpoints 30
 ```
 
-Chạy riêng DVGA GraphQL:
+This generator currently uses the Gemini client directly and validates the generated REST/GraphQL structures before writing them.
+
+Do not confuse this script with `scripts/run_pipeline.py`:
+
+| Script | Purpose | Provider path | Output |
+|---|---|---|---|
+| `run_pipeline.py` | Task B1-B4 | DeepCode skill | validated REST payloads |
+| `gen_payloads.py` | benchmark generation | Gemini client | REST/GraphQL/Nuclei corpora |
+
+## 9. Nuclei Execution
+
+The Nuclei executor consumes a validated JSON suite:
+
+```text
+suite.json
+    ↓
+Pydantic validation
+    ↓
+temporary Nuclei templates
+    ↓
+nuclei
+    ↓
+JSONL results
+    ↓
+normalized ExecutorResult
+```
+
+Example:
 
 ```bash
-python Schemathesis/run_graphql_fuzz1.py \
-  --base-url http://localhost:5013 \
-  --payloads Schemathesis/payload_graphql.json \
-  --rules Schemathesis/rules.json \
-  --results-dir Schemathesis/results
+cd Nuclei/executor
+
+python -m executor.run_nuclei \
+  --input benchmark/suite.json \
+  --export-dir ../../results/nuclei
+
+cd ../..
 ```
 
-Authentication được truyền qua `tokens.env` trong flow chuẩn hoặc qua
-`FUZZ_AUTH_HEADER`/tùy chọn `--auth-header` tùy runner.
+If Nuclei is not in `PATH`:
 
-## Rules and feedback
+```bash
+export NUCLEI_BIN=/absolute/path/to/nuclei
+```
 
-Rules kiểm thử dùng chung được lưu tại [`Schemathesis/rules.json`](Schemathesis/rules.json).
-Feedback runtime có thể được dùng để cải thiện thế hệ payload tiếp theo:
+A test case without a matcher is skipped because the executor cannot determine a meaningful match condition.
+
+The executor does not interpret a Nuclei process return code as proof of a vulnerability. Findings are derived from the emitted JSONL results and matcher evidence.
+
+## 10. Runtime Feedback Loop
+
+The feedback loop is an iterative Nuclei path:
+
+```text
+Generation 0
+   ↓
+Nuclei execution
+   ↓
+Oracle classification
+   ↓
+feedback
+   ↓
+Generation 1
+   ↓
+...
+```
+
+Run:
 
 ```bash
 python scripts/run_feedback_loop.py
 ```
 
-Các tín hiệu từ response hoặc CVE là context cho test case, không phải bằng
-chứng độc lập rằng target có lỗ hổng. Finding chỉ nên được xem là confirmed khi
-có evidence runtime phù hợp.
+The loop stops on successful exploitation, a configured no-progress condition, or the maximum generation budget.
 
-## Results and confirmation
+Feedback artifacts are written below:
 
-Pipeline lưu kết quả chi tiết của Schemathesis trong `Schemathesis/results/`
-và kết quả Nuclei trong `results/nuclei/`, sau đó chuẩn hóa vào `results/`.
-Finding thường gồm target, endpoint, method, attack type, OWASP category,
-payload, status code, response time, evidence, severity và trạng thái xác nhận.
+```text
+results/feedback/
+```
 
-Không coi mọi response lỗi là vulnerability confirmed:
+## 11. Result Aggregation
 
-- HTTP `5xx` là tín hiệu mạnh nhưng vẫn cần xem evidence.
-- Chuỗi chung như `error`, `exception` hoặc `debug` không đủ để kết luận.
-- GraphQL error không tự động là lỗ hổng.
-- CVE match chỉ là thông tin ngữ cảnh, không chứng minh khai thác thành công.
+After Schemathesis and/or Nuclei execution:
 
-## Research evaluation
+```bash
+python scripts/aggregate_results.py
+```
 
-Để so sánh công bằng, mỗi treatment phải dùng cùng target, endpoint set, timeout,
-số lần chạy và seed. Protocol khuyến nghị:
+The aggregator reads supported NDJSON sources, normalizes them into a common finding schema, deduplicates by:
+
+```text
+tool
+target_app
+endpoint
+method
+vuln_type
+```
+
+and writes:
+
+```text
+results/findings_summary.csv
+results/findings_summary.ndjson
+```
+
+The unified summary is the preferred cross-engine result for analysis.
+
+## 12. Confirmation Semantics
+
+The project distinguishes between a candidate signal and a confirmed finding.
+
+Examples of strong signals include:
+
+- an explicit matcher hit;
+- expected security evidence in a response;
+- reproducible behavior across the confirmation logic;
+- authorization tests where the unauthorized identity actually receives access.
+
+The following should not be treated as automatic proof by themselves:
+
+```text
+HTTP 5xx
+generic "error" / "exception" text
+a GraphQL error response
+a CVE keyword match
+```
+
+The oracle and finding normalization layers preserve this distinction so that candidate findings are not silently counted as confirmed vulnerabilities.
+
+## 13. Authorization Checks
+
+`core/authorization.py` provides reusable checks for:
+
+- missing/invalid/expired authentication;
+- BOLA;
+- BFLA;
+- dependent stateful workflows.
+
+These checks are library components. They are not automatically invoked by `Schemathesis/run_security_tests.py` unless an execution path explicitly calls them.
+
+## 14. Baseline and Security Gate
+
+Baseline comparison is implemented in `core/baseline.py`.
+
+The baseline key is:
+
+```text
+target_app + method + endpoint + vulnerability
+```
+
+The security gate can fail a run when findings meet or exceed a severity threshold.
+
+Example:
+
+```bash
+python scripts/security_gate.py --input results/findings_summary.ndjson --fail-on high
+```
+
+Use the exact CLI help of the current script if options are changed:
+
+```bash
+python scripts/security_gate.py --help
+```
+
+## 15. Reproducible Evaluation
+
+Experiment evaluation is implemented in:
+
+```text
+core/evaluation.py
+scripts/evaluate_experiment.py
+```
+
+The intended comparison arms are:
 
 | Treatment | Generator | Validation | Feedback |
 |---|---|---:|---:|
@@ -295,43 +485,229 @@ số lần chạy và seed. Protocol khuyến nghị:
 | P1 | LLM | Yes | No |
 | P2 | LLM | Yes | Yes |
 
-Mỗi run cần lưu model/provider, prompt version, temperature, schema hash, token
-usage, repair count, runtime, payload artifact và findings artifact. Tạo một
-manifest JSON, trong đó mỗi phần tử `runs` trỏ tới một file payload JSON/NDJSON
-và một file findings JSON/NDJSON, rồi chạy:
+For fair comparisons, keep the target, endpoint set, timeout, run count, seed, schema/context hash, and relevant model/provider settings fixed.
 
-```bash
-python scripts/evaluate_experiment.py path/to/experiment_manifest.json \
-  --output results/experiment_metrics.json
+The evaluator reports metrics including payload validity, executability, uniqueness, confirmed findings, detection rate, false-positive rate, runtime, and LLM cost fields when the required telemetry is available.
+
+## 16. Run Manifests and Telemetry
+
+Generation runs use a versioned manifest contract:
+
+```text
+config/manifest.schema.json
 ```
 
-Evaluator xuất các metric `valid_payload_rate`, `executability_rate`,
-`unique_payload_rate`, `confirmed_findings`, `detection_rate`,
-`false_positive_rate`, `runtime_seconds`, `llm_cost_usd` và attribution theo
-source engine/payload source. `confirmed` chỉ được tính khi finding có xác nhận;
-candidate bị bác bỏ phải ghi `confirmation_status: "rejected"` để đo false positive.
+Manifests record:
 
-## Testing
+- run ID;
+- target/protocol;
+- provider/model;
+- token usage when exposed by the provider;
+- repair count and repair success;
+- stage timings;
+- payload count;
+- context/output artifact paths.
+
+Current DeepCode subprocess integration only receives stdout. Therefore token usage may remain unavailable/zero in manifests. Runtime must not be used to estimate token usage.
+
+## 17. AI Provider Configuration
+
+The repository currently ships a `.deepcode/providers.json` containing a Gemini provider profile.
+
+Check the current provider list:
 
 ```bash
-python -m pytest tests/ -v
+python scripts/switch_ai.py status
 ```
 
-## Security notes
-
-- Chỉ chạy fuzzing với VAmPI, crAPI, DVGA hoặc target có ủy quyền rõ ràng.
-- Không commit `.env`, `tokens.env`, API key hoặc output chứa dữ liệu nhạy cảm.
-- Giữ token ở user-level settings khi dùng DeepCode/DeepSeek; không đưa key vào
-  source code hay project config commit lên git.
-- Dừng lab sau khi hoàn thành:
+Switch to an available provider:
 
 ```bash
-bash lab/lab.sh down
+python scripts/switch_ai.py gemini
 ```
 
-## References
+Provider keys belong in `.env` or user-level DeepCode settings, never in committed source.
 
-- [`docs/USAGE.md`](docs/USAGE.md) - Task B và DeepCode integration.
-- [`lab/README.md`](lab/README.md) - Cài đặt và vận hành target lab.
-- [`Schemathesis/RUNBOOK.md`](Schemathesis/RUNBOOK.md) - Chạy Schemathesis từng target.
-- [`AGENTS.md`](AGENTS.md) - Phạm vi, quy ước và ownership của workspace.
+Example:
+
+```text
+GEMINI_API_KEY=<your-key>
+```
+
+Do not assume that `deepseek` is available merely because older documentation mentions it. The current provider registry is authoritative.
+
+## 18. Security and Operational Rules
+
+Never commit:
+
+```text
+.env
+tokens.env
+API keys
+bearer tokens
+sensitive response bodies
+private benchmark evidence
+```
+
+Only use authorized targets.
+
+Before changing a target, review:
+
+```text
+config/targets.yaml
+```
+
+The configuration currently allows only:
+
+```text
+vampi
+crapi
+dvga
+```
+
+Do not enable a production target merely by copying the commented example without reviewing authorization, authentication, rate limits, and data-handling requirements.
+
+## 19. Recommended Operator Workflows
+
+### Full local benchmark
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -r Schemathesis/requirements.txt
+python -m pip install -r Nuclei/executor/requirements.txt
+
+bash lab/lab.sh up
+bash lab/lab.sh status
+
+python Schemathesis/run_auth.py
+python Schemathesis/run_dvga.py
+
+python scripts/gen_payloads.py
+python Schemathesis/run_security_tests.py
+
+cd Nuclei/executor
+python -m executor.run_nuclei \
+  --input benchmark/suite.json \
+  --export-dir ../../results/nuclei
+cd ../..
+
+python scripts/aggregate_results.py
+```
+
+### DeepCode Task-B experiment
+
+```bash
+python scripts/switch_ai.py status
+python scripts/run_pipeline.py dataset/vampi_openapi.json \
+  --provider gemini \
+  --output results/payloads_vampi.json
+```
+
+Then explicitly hand the validated payload artifact to the appropriate fuzzing engine. Generation and execution are intentionally separate.
+
+### Reproducibility experiment
+
+1. Fix the target and endpoint set.
+2. Fix timeout, seed, and run count.
+3. Record provider/model and prompt version.
+4. Record the schema/context hash.
+5. Store payload and findings artifacts.
+6. Create an experiment manifest.
+7. Run `scripts/evaluate_experiment.py`.
+8. Compare treatments only after normalization and confirmation filtering.
+
+## 20. Troubleshooting
+
+### `run_security_tests.py` reports missing payloads
+
+Check:
+
+```bash
+ls Schemathesis/payload_rest.json
+ls Schemathesis/payload_crapi.json
+ls Schemathesis/payload_graphql.json
+```
+
+If they are absent, generate or restore the expected payload artifacts before running the controller.
+
+### Authentication is missing
+
+Run:
+
+```bash
+python Schemathesis/run_auth.py
+python Schemathesis/run_dvga.py
+```
+
+Then verify only the variable names:
+
+```bash
+grep -E '^export .*AUTH_HEADER=' Schemathesis/tokens.env \
+  | sed 's/=.*/=<redacted>/'
+```
+
+### Nuclei is not found
+
+```bash
+nuclei -version
+```
+
+or:
+
+```bash
+export NUCLEI_BIN=/absolute/path/to/nuclei
+```
+
+### DeepCode is not found
+
+Verify the local DeepCode CLI installation/build and rebuild the `Aegis Agent/` source when required:
+
+```bash
+cd "Aegis Agent"
+npm install
+npm run build
+cd ..
+```
+
+### LLM output fails validation
+
+Inspect the validation error and repair count in the run output/manifest. The Task-B pipeline intentionally stops after three attempts.
+
+### Aggregated results are empty
+
+Check that the expected NDJSON inputs exist:
+
+```bash
+find Schemathesis/results Nuclei/executor/results results/nuclei \
+  -name '*.ndjson' -print
+```
+
+## 21. Current Documentation Debt
+
+The current repository still contains older wording that should be removed or corrected.
+
+### Must fix
+
+1. `Schemathesis/run_security_tests.py` still prints `main_pipeline` and `legacy pipeline` terminology although the repository has moved the active scripts to `Schemathesis/`.
+2. `Schemathesis/README.md` and `Schemathesis/RUNBOOK.md` describe the old standalone layout and should be replaced with documentation that treats `config/targets.yaml` and the repository-root lab as authoritative.
+3. `docs/USAGE.md` contains older DeepCode setup instructions and should not be the source of truth for the current provider registry.
+4. `scripts/switch_ai.py` documentation mentions DeepSeek, but the committed `.deepcode/providers.json` currently exposes only Gemini. Documentation should follow the provider registry.
+5. The root README previously presented the whole repository as one linear pipeline. The implementation actually contains separate generation, fuzzing, feedback, aggregation, and evaluation flows.
+6. `config/targets.yaml` is described as the single target source, but some legacy/compatibility logic still exists in downstream scripts. Prefer `config/targets.yaml` as the operator-facing source of truth.
+7. `Schemathesis` runtime artifacts and root `results/` have different ownership. The documentation must keep those paths distinct.
+8. `gen_payloads.py` and `run_pipeline.py` are not interchangeable and should remain documented as separate workflows.
+
+## 22. Source-of-Truth Rules
+
+When documentation conflicts with implementation, use this order:
+
+```text
+1. Current executable code
+2. config/targets.yaml
+3. current manifest/schema contracts
+4. current provider registry
+5. README/RUNBOOK
+6. historical reports and old task notes
+```
+
+This keeps the documentation aligned with the repository rather than preserving historical assumptions.
