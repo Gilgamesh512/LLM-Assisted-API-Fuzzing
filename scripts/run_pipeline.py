@@ -98,14 +98,13 @@ def run_b2_b3_generate_payloads(
     *,
     provider_instance,
     cwd: Path | None = None,
-) -> str:
+) -> dict[str, Any]:
     prompt = build_payload_generation_prompt(context_path)
-    result = _generate_reply(
+    return _generate_reply(
         provider_instance,
         prompt,
         context={"context_path": str(context_path), "cwd": str(cwd or REPO_ROOT)},
     )
-    return str(result["reply"])
 
 
 def run_b2_b3_repair(
@@ -115,10 +114,9 @@ def run_b2_b3_repair(
     *,
     provider_instance,
     cwd: Path | None = None,
-) -> str:
+) -> dict[str, Any]:
     repair_prompt = build_repair_prompt(previous_raw, error_message, attempt)
-    result = _repair_reply(provider_instance, repair_prompt, context={"cwd": str(cwd or REPO_ROOT)})
-    return str(result["reply"])
+    return _repair_reply(provider_instance, repair_prompt, context={"cwd": str(cwd or REPO_ROOT)})
 
 
 def run_pipeline(
@@ -144,8 +142,11 @@ def run_pipeline(
 
     print(f"[pipeline] B2/B3 — Generate payloads via {resolved_provider} provider...")
     telemetry.start("llm_generation")
-    raw = run_b2_b3_generate_payloads(context_path, provider_instance=provider_instance, cwd=cwd)
+    generation_result = run_b2_b3_generate_payloads(context_path, provider_instance=provider_instance, cwd=cwd)
+    telemetry.add_usage(generation_result.get("usage"), source=resolved_provider)
+    model_name = generation_result.get("model") or model_name
     telemetry.stop("llm_generation")
+    raw = str(generation_result["reply"])
 
     print("[pipeline] B4 — Validate output...")
     telemetry.start("validation")
@@ -160,13 +161,16 @@ def run_pipeline(
         print(f"[pipeline]   Không hợp lệ (lần {attempt - 1}): {result.error_message}")
         print(f"[pipeline]   Thử sinh lại (lần {attempt}/{MAX_REPAIR_ATTEMPTS})...")
         telemetry.start("repair")
-        raw = run_b2_b3_repair(
+        repair_result = run_b2_b3_repair(
             raw,
             result.error_message or "",
             attempt,
             provider_instance=provider_instance,
             cwd=cwd,
         )
+        telemetry.add_usage(repair_result.get("usage"), source=resolved_provider)
+        model_name = repair_result.get("model") or model_name
+        raw = str(repair_result["reply"])
         telemetry.stop("repair")
         telemetry.start("validation")
         result = validate_llm_output(raw, attempt=attempt)

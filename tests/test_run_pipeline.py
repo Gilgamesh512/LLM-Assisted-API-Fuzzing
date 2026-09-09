@@ -108,3 +108,90 @@ def test_run_pipeline_propagates_provider_error(tmp_path: Path):
     with patch.object(pipeline, "get_provider", return_value=fake_provider):
         with pytest.raises(pipeline.PipelineError, match="thoát mã lỗi"):
             pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini")
+
+
+def test_run_pipeline_records_generation_usage_in_manifest(tmp_path: Path):
+    output_path = tmp_path / "out.json"
+    manifest_path = tmp_path / "manifest.json"
+    fake_provider = FakeProvider()
+    fake_provider.model = "gemini-2.0-flash"
+    fake_provider.generate = lambda prompt, *, system_prompt=None, context=None: {
+        "reply": VALID_PAYLOAD_JSON,
+        "usage": {"prompt_tokens": 42, "completion_tokens": 8, "total_tokens": 50},
+        "model": "gemini-2.0-flash",
+        "latency_seconds": 0.25,
+    }
+    fake_provider.repair = lambda prompt, *, system_prompt=None, context=None: {
+        "reply": VALID_PAYLOAD_JSON,
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7},
+        "model": "gemini-2.0-flash",
+        "latency_seconds": 0.18,
+    }
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini", manifest_path=manifest_path)
+
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["llm"]["usage_available"] is True
+    assert manifest["llm"]["prompt_tokens"] == 42
+    assert manifest["llm"]["completion_tokens"] == 8
+    assert manifest["llm"]["total_tokens"] == 50
+    assert manifest["llm"]["model"] == "gemini-2.0-flash"
+
+
+def test_run_pipeline_accumulates_repair_usage_with_generation_usage(tmp_path: Path):
+    output_path = tmp_path / "out.json"
+    manifest_path = tmp_path / "manifest.json"
+    fake_provider = FakeProvider()
+    fake_provider.model = "deepseek-chat"
+    responses = iter([
+        {"reply": "khong phai json hop le", "usage": {"prompt_tokens": 10, "completion_tokens": 4, "total_tokens": 14}, "model": "deepseek-chat", "latency_seconds": 0.3},
+        {"reply": VALID_PAYLOAD_JSON, "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5}, "model": "deepseek-chat", "latency_seconds": 0.2},
+    ])
+    fake_provider.generate = lambda prompt, *, system_prompt=None, context=None: next(responses)
+    fake_provider.repair = lambda prompt, *, system_prompt=None, context=None: {
+        "reply": VALID_PAYLOAD_JSON,
+        "usage": {"prompt_tokens": 3, "completion_tokens": 2, "total_tokens": 5},
+        "model": "deepseek-chat",
+        "latency_seconds": 0.2,
+    }
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="deepseek", manifest_path=manifest_path)
+
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["llm"]["prompt_tokens"] == 13
+    assert manifest["llm"]["completion_tokens"] == 6
+    assert manifest["llm"]["total_tokens"] == 19
+    assert manifest["llm"]["provider"] == "deepseek"
+    assert manifest["llm"]["model"] == "deepseek-chat"
+
+
+def test_run_pipeline_keeps_missing_usage_unavailable_no_fake_zero(tmp_path: Path):
+    output_path = tmp_path / "out.json"
+    manifest_path = tmp_path / "manifest.json"
+    fake_provider = FakeProvider()
+    fake_provider.model = "gemini-2.5-flash"
+    fake_provider.generate = lambda prompt, *, system_prompt=None, context=None: {
+        "reply": VALID_PAYLOAD_JSON,
+        "model": "gemini-2.5-flash",
+        "latency_seconds": 0.15,
+    }
+    fake_provider.repair = lambda prompt, *, system_prompt=None, context=None: {
+        "reply": VALID_PAYLOAD_JSON,
+        "model": "gemini-2.5-flash",
+        "latency_seconds": 0.12,
+    }
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini", manifest_path=manifest_path)
+
+    assert code == 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["llm"]["usage_available"] is False
+    assert manifest["llm"]["prompt_tokens"] is None
+    assert manifest["llm"]["completion_tokens"] is None
+    assert manifest["llm"]["total_tokens"] is None
+    assert manifest["llm"]["model"] == "gemini-2.5-flash"
