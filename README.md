@@ -1,713 +1,981 @@
 # LLM-Assisted API Fuzzing
 
-LLM-assisted API security testing pipeline with context-aware payload generation, schema validation, repair, runtime feedback, Nuclei execution, result normalization, and reproducible experiment evaluation.
+LLM-assisted API fuzzing framework for generating, validating, repairing, and evaluating API attack payloads from OpenAPI/Swagger specifications.
 
-> **Scope:** The default benchmark targets are VAmPI, crAPI, and DVGA running locally. Use the pipeline only against systems you own or are explicitly authorized to test.
+The project follows a unified architecture with interchangeable LLM providers.
 
-## 1. Current Architecture
+Current supported providers:
 
-The repository contains several cooperating execution paths. They are related, but they are **not one single command chain**.
+- Gemini
+- DeepSeek
+
+The project follows the principle:
+
+> **ONE PIPELINE, MULTIPLE LLM PROVIDERS**
+
+Gemini and DeepSeek are provider implementations of the same LLM layer. They do not use separate fuzzing pipelines.
+
+---
+
+# 1. Architecture
 
 ```text
-                         ┌─────────────────────────────┐
-                         │       Target Lab            │
-                         │ VAmPI :5002                 │
-                         │ crAPI :8888                 │
-                         │ DVGA :5013/graphql         │
-                         └──────────────┬──────────────┘
-                                        │
-                          auth + schema │
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │ Schemathesis preparation    │
-                         │ run_auth.py                 │
-                         │ run_dvga.py                 │
-                         └──────────────┬──────────────┘
-                                        │
-                                        ▼
-        ┌────────────────────────────────────────────────────────┐
-        │                  Payload generation                    │
-        │                                                        │
-        │ A. DeepCode Task-B pipeline                            │
-        │    analyzer -> api-payload-generator -> validator      │
-        │    -> repair -> validated REST payloads                │
-        │                                                        │
-        │ B. Gemini benchmark generator                          │
-        │    REST + GraphQL + Nuclei suite generation            │
-        └───────────────────────────┬────────────────────────────┘
-                                    │
-                                    ▼
-        ┌────────────────────────────────────────────────────────┐
-        │                    Security testing                    │
-        │ Schemathesis REST/GraphQL + Nuclei executor             │
-        └───────────────────────────┬────────────────────────────┘
-                                    │
-                                    ▼
-        ┌────────────────────────────────────────────────────────┐
-        │ Results / evaluation                                   │
-        │ raw findings -> normalization -> dedup -> summary       │
-        │ baseline / security gate / experiment metrics            │
-        └────────────────────────────────────────────────────────┘
+OpenAPI / Swagger
+        │
+        ▼
+core/analyzer.py
+        │
+        ▼
+Structured API Context
+        │
+        ▼
+core/prompt_builder.py
+        │
+        ▼
+LLM Provider Abstraction
+        │
+        ├───────────────┬───────────────┐
+        ▼               ▼               ▼
+     Gemini          DeepSeek        Future
+     Provider        Provider        Provider
+        │               │
+        └───────────────┴───────────────┘
+                        │
+                        ▼
+                 Raw LLM Output
+                        │
+                        ▼
+                core/validator.py
+                        │
+                 ┌──────┴──────┐
+                 │             │
+               Valid         Invalid
+                 │             │
+                 │             ▼
+                 │       Same LLM Provider
+                 │             │
+                 │           Repair
+                 │             │
+                 └──────┬──────┘
+                        ▼
+                Validated Payload
+                        │
+                        ▼
+              Schemathesis / Nuclei
+                        │
+                        ▼
+                    Findings
+                        │
+                        ▼
+                   Evaluation
+                        │
+                        ▼
+                    Manifest
 ```
 
-The repository's current target configuration is centralized in `config/targets.yaml`. It declares VAmPI, crAPI, and DVGA, their base URLs, specs, payload outputs, and authentication metadata.
+---
 
-## 2. Repository Layout
+# 2. Core Design
+
+The system is organized around a single pipeline.
+
+```text
+                  Unified Pipeline
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+          Gemini                  DeepSeek
+        Provider                  Provider
+             │                       │
+             └───────────┬───────────┘
+                         │
+                         ▼
+                Common Fuzzing Flow
+```
+
+The provider only controls the LLM interaction.
+
+The following stages are shared:
+
+- OpenAPI/Swagger analysis
+- API context construction
+- Prompt construction
+- Payload validation
+- Payload repair
+- Fuzzing
+- Finding/oracle processing
+- Evaluation
+- Telemetry
+- Manifest generation
+
+This allows different LLM providers to be evaluated under the same pipeline.
+
+---
+
+# 3. Project Structure
+
+Important runtime components:
 
 ```text
 LLM-Assisted-API-Fuzzing/
+│
 ├── core/
 │   ├── analyzer.py
-│   ├── authorization.py
-│   ├── baseline.py
-│   ├── deepseek_client.py
-│   ├── evaluation.py
-│   ├── feedback_loop.py
-│   ├── finding.py
+│   ├── providers.py
 │   ├── gemini_client.py
-│   ├── manifest.py
-│   ├── oracle.py
-│   ├── security_checks.py
-│   ├── target_config.py
+│   ├── deepseek_client.py
+│   ├── prompt_builder.py
+│   ├── validator.py
 │   ├── telemetry.py
-│   └── validator.py
+│   ├── manifest.py
+│   └── evaluation.py
 │
 ├── scripts/
 │   ├── run_pipeline.py
-│   ├── gen_payloads.py
-│   ├── run_feedback_loop.py
-│   ├── aggregate_results.py
-│   ├── evaluate_experiment.py
-│   ├── security_gate.py
-│   └── switch_ai.py
+│   └── ...
+│
+├── tests/
+│   ├── test_run_pipeline.py
+│   └── ...
 │
 ├── Schemathesis/
-│   ├── run_security_tests.py
-│   ├── run_schemathesis1.py
-│   ├── run_graphql_fuzz1.py
-│   ├── run_auth.py
-│   ├── run_dvga.py
-│   ├── rules_engine.py
-│   ├── rules.json
-│   ├── payload_rest.json
-│   ├── payload_crapi.json
-│   ├── payload_graphql.json
-│   └── results/
-│
 ├── Nuclei/
-│   └── executor/
-│       ├── run_nuclei.py
-│       ├── nuclei_runner.py
-│       ├── schemas.py
-│       ├── template_builder.py
-│       └── benchmark/
-│
-├── lab/
-│   ├── lab.sh
-│   ├── docker-compose.yml
-│   └── crapi-compose.yml
-│
-├── dataset/
-├── baseline/
-├── results/
-├── config/
-├── docs/
-├── tests/
-└── Aegis Agent/
+├── LLM/
+└── README.md
 ```
 
-`Aegis Agent/` is the local DeepCode CLI source used by the Task-B integration. It is not the fuzzing engine itself.
-
-## 3. Requirements
-
-### Base environment
-
-- Python 3.11-3.13
-- Docker
-- Docker Compose plugin (`docker compose`)
-- `curl`
-- `nuclei` in `PATH` when using the Nuclei executor
-- Node.js/npm when rebuilding the bundled DeepCode CLI
-- DeepCode CLI when using `scripts/run_pipeline.py`
-- An LLM provider credential for LLM generation
-
-Install Python dependencies:
-
-```bash
-python -m pip install -r requirements.txt
-python -m pip install -r Schemathesis/requirements.txt
-python -m pip install -r Nuclei/executor/requirements.txt
-```
-
-Run tests:
-
-```bash
-python -m pytest tests/ -v
-```
-
-## 4. Target Lab
-
-Start the complete local lab:
-
-```bash
-bash lab/lab.sh up
-bash lab/lab.sh status
-```
-
-Stop it:
-
-```bash
-bash lab/lab.sh down
-```
-
-The lab launcher starts VAmPI and DVGA from `lab/docker-compose.yml` and downloads/starts the official crAPI compose stack when available.
-
-Expected endpoints:
-
-| Target | Protocol | Base URL |
-|---|---|---|
-| VAmPI | REST | `http://localhost:5002` |
-| crAPI | REST | `http://localhost:8888` |
-| DVGA | GraphQL | `http://localhost:5013/graphql` |
-
-The lab uses intentionally vulnerable applications and should remain isolated from production networks.
-
-## 5. Authentication and Schema Preparation
-
-After the lab is running:
-
-```bash
-python Schemathesis/run_auth.py
-python Schemathesis/run_dvga.py
-```
-
-These stages create/update:
+### Canonical runtime entry point
 
 ```text
-Schemathesis/tokens.env
-Schemathesis/dvga_schema.json
+scripts/run_pipeline.py
 ```
 
-`tokens.env` may contain bearer tokens and must not be committed or printed to shared logs.
-
-## 6. Standard Security-Test Pipeline
-
-The normal Schemathesis security-test controller is:
-
-```bash
-python Schemathesis/run_security_tests.py
-```
-
-It resolves the current payload corpora, specs, rules, and authentication handoff, then runs:
+### Provider abstraction
 
 ```text
-VAmPI REST
-   ↓
-crAPI REST
-   ↓
-DVGA GraphQL
+core/providers.py
 ```
 
-The controller writes its detailed findings to:
+### API analysis
 
 ```text
-Schemathesis/results/
-├── vulnerabilities.csv
-├── vulnerabilities.ndjson
-├── experiment_runs.csv
-├── state.json
-└── state_graphql.json
+core/analyzer.py
 ```
 
-This controller does **not** run Nuclei and does **not** automatically generate new LLM payloads.
-
-## 7. LLM Payload Generation — DeepCode Task-B Pipeline
-
-`scripts/run_pipeline.py` implements the REST-oriented B1-B4 flow:
+### Shared prompt construction
 
 ```text
-OpenAPI/Swagger
-      ↓
-B1: core/analyzer.py
-      ↓
-context.json
-      ↓
-B2/B3: DeepCode skill api-payload-generator
-      ↓
-raw LLM output
-      ↓
-B4: core/validator.py
-      ↓
-repair loop (up to 3 attempts)
-      ↓
-validated payload JSON
-      ↓
-run manifest
+core/prompt_builder.py
 ```
 
-Example:
-
-```bash
-python scripts/run_pipeline.py path/to/openapi.yaml
-```
-
-Custom output:
-
-```bash
-python scripts/run_pipeline.py path/to/openapi.yaml \
-  --output payloads_validated.json
-```
-
-Provider selection:
-
-```bash
-python scripts/run_pipeline.py path/to/openapi.yaml \
-  --provider gemini
-```
-
-The current implementation calls the DeepCode CLI through Node with `shell=False`. This is intentional: generated payload text is passed as an argument rather than through a shell command.
-
-A successful run creates:
+### Payload validation
 
 ```text
-context.json
-payloads_validated.json
-results/runs/<run_id>/manifest.json
+core/validator.py
 ```
 
-The validator uses a strict Pydantic contract. Invalid JSON/schema output is repaired automatically and the pipeline stops after the configured maximum of three attempts.
-
-**Important:** this pipeline generates and validates payloads; it does not automatically execute the Schemathesis or Nuclei fuzzers.
-
-## 8. LLM Payload Generation — Benchmark Generator
-
-`scripts/gen_payloads.py` is a separate generator designed for the benchmark corpus.
-
-It can generate:
+### Telemetry
 
 ```text
-REST payloads
-GraphQL payloads
-Nuclei test suites
+core/telemetry.py
 ```
 
-Examples:
+---
 
-```bash
-python scripts/gen_payloads.py
-python scripts/gen_payloads.py --only rest
-python scripts/gen_payloads.py --only graphql
-python scripts/gen_payloads.py --target vampi
-python scripts/gen_payloads.py --max-endpoints 30
-```
+# 4. LLM Provider Abstraction
 
-This generator currently uses the Gemini client directly and validates the generated REST/GraphQL structures before writing them.
-
-Do not confuse this script with `scripts/run_pipeline.py`:
-
-| Script | Purpose | Provider path | Output |
-|---|---|---|---|
-| `run_pipeline.py` | Task B1-B4 | DeepCode skill | validated REST payloads |
-| `gen_payloads.py` | benchmark generation | Gemini client | REST/GraphQL/Nuclei corpora |
-
-## 9. Nuclei Execution
-
-The Nuclei executor consumes a validated JSON suite:
+The provider abstraction is implemented in:
 
 ```text
-suite.json
-    ↓
-Pydantic validation
-    ↓
-temporary Nuclei templates
-    ↓
-nuclei
-    ↓
-JSONL results
-    ↓
-normalized ExecutorResult
+core/providers.py
 ```
 
-Example:
-
-```bash
-cd Nuclei/executor
-
-python -m executor.run_nuclei \
-  --input benchmark/suite.json \
-  --export-dir ../../results/nuclei
-
-cd ../..
-```
-
-If Nuclei is not in `PATH`:
-
-```bash
-export NUCLEI_BIN=/absolute/path/to/nuclei
-```
-
-A test case without a matcher is skipped because the executor cannot determine a meaningful match condition.
-
-The executor does not interpret a Nuclei process return code as proof of a vulnerability. Findings are derived from the emitted JSONL results and matcher evidence.
-
-## 10. Runtime Feedback Loop
-
-The feedback loop is an iterative Nuclei path:
+It provides a common interface for LLM operations such as:
 
 ```text
-Generation 0
-   ↓
-Nuclei execution
-   ↓
-Oracle classification
-   ↓
-feedback
-   ↓
-Generation 1
-   ↓
-...
+generate()
+repair()
+metadata
 ```
 
-Run:
-
-```bash
-python scripts/run_feedback_loop.py
-```
-
-The loop stops on successful exploitation, a configured no-progress condition, or the maximum generation budget.
-
-Feedback artifacts are written below:
+The current provider registry contains:
 
 ```text
-results/feedback/
+PROVIDERS
+├── gemini
+└── deepseek
 ```
 
-## 11. Result Aggregation
-
-After Schemathesis and/or Nuclei execution:
-
-```bash
-python scripts/aggregate_results.py
-```
-
-The aggregator reads supported NDJSON sources, normalizes them into a common finding schema, deduplicates by:
+Provider instances are resolved through:
 
 ```text
-tool
-target_app
-endpoint
-method
-vuln_type
+get_provider()
 ```
 
-and writes:
+The main pipeline therefore does not need to implement a separate fuzzing workflow for every LLM.
+
+---
+
+# 5. Gemini Provider
+
+Gemini is implemented as one provider of the unified LLM layer.
+
+Provider-specific client:
 
 ```text
-results/findings_summary.csv
-results/findings_summary.ndjson
+core/gemini_client.py
 ```
 
-The unified summary is the preferred cross-engine result for analysis.
+Runtime selection:
 
-## 12. Confirmation Semantics
+```bash
+python scripts/run_pipeline.py --provider gemini
+```
 
-The project distinguishes between a candidate signal and a confirmed finding.
+A model can also be selected explicitly:
 
-Examples of strong signals include:
+```bash
+python scripts/run_pipeline.py \
+    --provider gemini \
+    --model gemini-3.7-flash
+```
 
-- an explicit matcher hit;
-- expected security evidence in a response;
-- reproducible behavior across the confirmation logic;
-- authorization tests where the unauthorized identity actually receives access.
+The exact model available depends on the configured Gemini API and the provider implementation.
 
-The following should not be treated as automatic proof by themselves:
+---
+
+# 6. DeepSeek Provider
+
+DeepSeek is implemented as another provider of the same unified LLM layer.
+
+Provider-specific client:
 
 ```text
-HTTP 5xx
-generic "error" / "exception" text
-a GraphQL error response
-a CVE keyword match
+core/deepseek_client.py
 ```
 
-The oracle and finding normalization layers preserve this distinction so that candidate findings are not silently counted as confirmed vulnerabilities.
-
-## 13. Authorization Checks
-
-`core/authorization.py` provides reusable checks for:
-
-- missing/invalid/expired authentication;
-- BOLA;
-- BFLA;
-- dependent stateful workflows.
-
-These checks are library components. They are not automatically invoked by `Schemathesis/run_security_tests.py` unless an execution path explicitly calls them.
-
-## 14. Baseline and Security Gate
-
-Baseline comparison is implemented in `core/baseline.py`.
-
-The baseline key is:
-
-```text
-target_app + method + endpoint + vulnerability
-```
-
-The security gate can fail a run when findings meet or exceed a severity threshold.
-
-Example:
+Runtime selection:
 
 ```bash
-python scripts/security_gate.py --input results/findings_summary.ndjson --fail-on high
+python scripts/run_pipeline.py --provider deepseek
 ```
 
-Use the exact CLI help of the current script if options are changed:
+A model can also be selected explicitly:
 
 ```bash
-python scripts/security_gate.py --help
+python scripts/run_pipeline.py \
+    --provider deepseek \
+    --model deepseek-chat
 ```
 
-## 15. Reproducible Evaluation
+Gemini and DeepSeek use the same downstream pipeline.
 
-Experiment evaluation is implemented in:
+---
 
-```text
-core/evaluation.py
-scripts/evaluate_experiment.py
-```
+# 7. Runtime Provider Selection
 
-The intended comparison arms are:
+Provider selection is performed at runtime.
 
-| Treatment | Generator | Validation | Feedback |
-|---|---|---:|---:|
-| B0 | Schemathesis default | No | No |
-| B1 | Schemathesis + handcrafted payload | No | No |
-| P0 | LLM | No | No |
-| P1 | LLM | Yes | No |
-| P2 | LLM | Yes | Yes |
-
-For fair comparisons, keep the target, endpoint set, timeout, run count, seed, schema/context hash, and relevant model/provider settings fixed.
-
-The evaluator reports metrics including payload validity, executability, uniqueness, confirmed findings, detection rate, false-positive rate, runtime, and LLM cost fields when the required telemetry is available.
-
-## 16. Run Manifests and Telemetry
-
-Generation runs use a versioned manifest contract:
-
-```text
-config/manifest.schema.json
-```
-
-Manifests record:
-
-- run ID;
-- target/protocol;
-- provider/model;
-- token usage when exposed by the provider;
-- repair count and repair success;
-- stage timings;
-- payload count;
-- context/output artifact paths.
-
-Current DeepCode subprocess integration only receives stdout. Therefore token usage may remain unavailable/zero in manifests. Runtime must not be used to estimate token usage.
-
-## 17. AI Provider Configuration
-
-The repository currently ships a `.deepcode/providers.json` containing a Gemini provider profile.
-
-Check the current provider list:
+The provider must be explicitly specified:
 
 ```bash
-python scripts/switch_ai.py status
-```
-
-Switch to an available provider:
-
-```bash
-python scripts/switch_ai.py gemini
-```
-
-Provider keys belong in `.env` or user-level DeepCode settings, never in committed source.
-
-Example:
-
-```text
-GEMINI_API_KEY=<your-key>
-```
-
-Do not assume that `deepseek` is available merely because older documentation mentions it. The current provider registry is authoritative.
-
-## 18. Security and Operational Rules
-
-Never commit:
-
-```text
-.env
-tokens.env
-API keys
-bearer tokens
-sensitive response bodies
-private benchmark evidence
-```
-
-Only use authorized targets.
-
-Before changing a target, review:
-
-```text
-config/targets.yaml
-```
-
-The configuration currently allows only:
-
-```text
-vampi
-crapi
-dvga
-```
-
-Do not enable a production target merely by copying the commented example without reviewing authorization, authentication, rate limits, and data-handling requirements.
-
-## 19. Recommended Operator Workflows
-
-### Full local benchmark
-
-```bash
-python -m pip install -r requirements.txt
-python -m pip install -r Schemathesis/requirements.txt
-python -m pip install -r Nuclei/executor/requirements.txt
-
-bash lab/lab.sh up
-bash lab/lab.sh status
-
-python Schemathesis/run_auth.py
-python Schemathesis/run_dvga.py
-
-python scripts/gen_payloads.py
-python Schemathesis/run_security_tests.py
-
-cd Nuclei/executor
-python -m executor.run_nuclei \
-  --input benchmark/suite.json \
-  --export-dir ../../results/nuclei
-cd ../..
-
-python scripts/aggregate_results.py
-```
-
-### DeepCode Task-B experiment
-
-```bash
-python scripts/switch_ai.py status
-python scripts/run_pipeline.py dataset/vampi_openapi.json \
-  --provider gemini \
-  --output results/payloads_vampi.json
-```
-
-Then explicitly hand the validated payload artifact to the appropriate fuzzing engine. Generation and execution are intentionally separate.
-
-### Reproducibility experiment
-
-1. Fix the target and endpoint set.
-2. Fix timeout, seed, and run count.
-3. Record provider/model and prompt version.
-4. Record the schema/context hash.
-5. Store payload and findings artifacts.
-6. Create an experiment manifest.
-7. Run `scripts/evaluate_experiment.py`.
-8. Compare treatments only after normalization and confirmation filtering.
-
-## 20. Troubleshooting
-
-### `run_security_tests.py` reports missing payloads
-
-Check:
-
-```bash
-ls Schemathesis/payload_rest.json
-ls Schemathesis/payload_crapi.json
-ls Schemathesis/payload_graphql.json
-```
-
-If they are absent, generate or restore the expected payload artifacts before running the controller.
-
-### Authentication is missing
-
-Run:
-
-```bash
-python Schemathesis/run_auth.py
-python Schemathesis/run_dvga.py
-```
-
-Then verify only the variable names:
-
-```bash
-grep -E '^export .*AUTH_HEADER=' Schemathesis/tokens.env \
-  | sed 's/=.*/=<redacted>/'
-```
-
-### Nuclei is not found
-
-```bash
-nuclei -version
+python scripts/run_pipeline.py --provider gemini
 ```
 
 or:
 
 ```bash
-export NUCLEI_BIN=/absolute/path/to/nuclei
+python scripts/run_pipeline.py --provider deepseek
 ```
 
-### DeepCode is not found
-
-Verify the local DeepCode CLI installation/build and rebuild the `Aegis Agent/` source when required:
-
-```bash
-cd "Aegis Agent"
-npm install
-npm run build
-cd ..
-```
-
-### LLM output fails validation
-
-Inspect the validation error and repair count in the run output/manifest. The Task-B pipeline intentionally stops after three attempts.
-
-### Aggregated results are empty
-
-Check that the expected NDJSON inputs exist:
-
-```bash
-find Schemathesis/results Nuclei/executor/results results/nuclei \
-  -name '*.ndjson' -print
-```
-
-## 21. Current Documentation Debt
-
-The current repository still contains older wording that should be removed or corrected.
-
-### Must fix
-
-1. `Schemathesis/run_security_tests.py` still prints `main_pipeline` and `legacy pipeline` terminology although the repository has moved the active scripts to `Schemathesis/`.
-2. `Schemathesis/README.md` and `Schemathesis/RUNBOOK.md` describe the old standalone layout and should be replaced with documentation that treats `config/targets.yaml` and the repository-root lab as authoritative.
-3. `docs/USAGE.md` contains older DeepCode setup instructions and should not be the source of truth for the current provider registry.
-4. `scripts/switch_ai.py` documentation mentions DeepSeek, but the committed `.deepcode/providers.json` currently exposes only Gemini. Documentation should follow the provider registry.
-5. The root README previously presented the whole repository as one linear pipeline. The implementation actually contains separate generation, fuzzing, feedback, aggregation, and evaluation flows.
-6. `config/targets.yaml` is described as the single target source, but some legacy/compatibility logic still exists in downstream scripts. Prefer `config/targets.yaml` as the operator-facing source of truth.
-7. `Schemathesis` runtime artifacts and root `results/` have different ownership. The documentation must keep those paths distinct.
-8. `gen_payloads.py` and `run_pipeline.py` are not interchangeable and should remain documented as separate workflows.
-
-## 22. Source-of-Truth Rules
-
-When documentation conflicts with implementation, use this order:
+Supported providers are currently:
 
 ```text
-1. Current executable code
-2. config/targets.yaml
-3. current manifest/schema contracts
-4. current provider registry
-5. README/RUNBOOK
-6. historical reports and old task notes
+gemini
+deepseek
 ```
 
-This keeps the documentation aligned with the repository rather than preserving historical assumptions.
+Unsupported providers are rejected explicitly.
+
+There is no silent provider fallback.
+
+The canonical provider resolution flow is:
+
+```text
+CLI
+ │
+ ▼
+_resolve_provider()
+ │
+ ▼
+get_provider()
+ │
+ ▼
+Provider Instance
+ │
+ ▼
+Unified Pipeline
+```
+
+---
+
+# 8. Runtime Model Selection
+
+The selected model is passed to the provider at runtime.
+
+Example:
+
+```bash
+python scripts/run_pipeline.py \
+    --provider gemini \
+    --model gemini-3.7-flash
+```
+
+Example:
+
+```bash
+python scripts/run_pipeline.py \
+    --provider deepseek \
+    --model deepseek-chat
+```
+
+The model used by the provider is propagated into pipeline metadata and the manifest when available.
+
+---
+
+# 9. API Key Configuration
+
+API keys are configured through environment variables.
+
+## Gemini
+
+```text
+GEMINI_API_KEY
+```
+
+Linux/Kali/Ubuntu:
+
+```bash
+export GEMINI_API_KEY="YOUR_GEMINI_KEY"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:GEMINI_API_KEY="YOUR_GEMINI_KEY"
+```
+
+## DeepSeek
+
+```text
+DEEPSEEK_API_KEY
+```
+
+Linux/Kali/Ubuntu:
+
+```bash
+export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_KEY"
+```
+
+Windows PowerShell:
+
+```powershell
+$env:DEEPSEEK_API_KEY="YOUR_DEEPSEEK_KEY"
+```
+
+API keys must not be hard-coded into the repository.
+
+If the required key is missing, the selected provider should return an explicit configuration error.
+
+The system does not silently switch to another provider.
+
+---
+
+# 10. Main Pipeline
+
+The canonical pipeline is:
+
+```text
+scripts/run_pipeline.py
+        │
+        ▼
+Provider Resolution
+        │
+        ▼
+OpenAPI / Swagger Analysis
+        │
+        ▼
+Structured API Context
+        │
+        ▼
+Shared Prompt Builder
+        │
+        ▼
+LLM Generation
+        │
+        ▼
+Payload Validation
+        │
+        ├── Valid ───────────────┐
+        │                        │
+        └── Invalid              │
+                │                │
+                ▼                │
+          Same Provider          │
+                │                │
+              Repair             │
+                │                │
+                ▼                │
+             Validate            │
+                │                │
+                └────────────────┘
+                         │
+                         ▼
+                 Validated Payload
+                         │
+                         ▼
+               Schemathesis / Nuclei
+                         │
+                         ▼
+                     Findings
+                         │
+                         ▼
+                    Evaluation
+                         │
+                         ▼
+                     Manifest
+```
+
+---
+
+# 11. API Analysis
+
+API analysis is handled by:
+
+```text
+core/analyzer.py
+```
+
+The analyzer processes the OpenAPI/Swagger specification and creates structured API context for the LLM.
+
+The analyzer is provider-independent.
+
+Therefore, the same API specification can be processed as:
+
+```text
+OpenAPI
+   ↓
+Analyzer
+   ↓
+API Context
+   ↓
+Gemini
+```
+
+or:
+
+```text
+OpenAPI
+   ↓
+Analyzer
+   ↓
+API Context
+   ↓
+DeepSeek
+```
+
+This is important for controlled provider comparison.
+
+---
+
+# 12. Shared Prompt Builder
+
+Prompt construction is implemented in:
+
+```text
+core/prompt_builder.py
+```
+
+The prompt builder is shared by all providers.
+
+The pipeline follows:
+
+```text
+API Context
+     ↓
+Prompt Builder
+     ↓
+Selected LLM Provider
+     ↓
+Raw LLM Response
+```
+
+There is no separate Gemini prompt pipeline or DeepSeek prompt pipeline in the canonical architecture.
+
+---
+
+# 13. Payload Validation
+
+Payload validation is implemented in:
+
+```text
+core/validator.py
+```
+
+Validation is provider-independent.
+
+The flow is:
+
+```text
+LLM Output
+    │
+    ▼
+Validator
+    │
+    ├── Valid
+    │     ↓
+    │   Continue
+    │
+    └── Invalid
+          ↓
+        Repair
+          ↓
+      Same Provider
+          ↓
+       Validator
+```
+
+The repair operation uses the same provider that generated the original payload.
+
+Example:
+
+```text
+Gemini
+  ↓
+Generate
+  ↓
+Invalid
+  ↓
+Gemini
+  ↓
+Repair
+```
+
+and:
+
+```text
+DeepSeek
+  ↓
+Generate
+  ↓
+Invalid
+  ↓
+DeepSeek
+  ↓
+Repair
+```
+
+The repair stage does not automatically switch providers.
+
+---
+
+# 14. Telemetry
+
+LLM telemetry is handled by:
+
+```text
+core/telemetry.py
+```
+
+The provider response can contain metadata such as:
+
+```text
+reply
+model
+usage
+latency
+```
+
+The pipeline preserves this information.
+
+Telemetry can contain:
+
+```text
+prompt tokens
+completion tokens
+total tokens
+```
+
+Generation and repair usage are accumulated when usage information is provided by the provider.
+
+Example:
+
+```text
+Generation:
+prompt = 10
+completion = 4
+total = 14
+
+Repair:
+prompt = 3
+completion = 2
+total = 5
+
+Accumulated:
+prompt = 13
+completion = 6
+total = 19
+```
+
+---
+
+# 15. Token Usage Handling
+
+Token usage is recorded only when the provider exposes usable token metadata.
+
+The project does not estimate tokens from runtime.
+
+For example, if the provider does not expose token usage:
+
+```text
+usage_available = false
+prompt_tokens = null
+completion_tokens = null
+total_tokens = null
+```
+
+The system does not invent token values.
+
+This distinction is important for research evaluation because runtime and token consumption are different measurements.
+
+---
+
+# 16. Manifest
+
+The pipeline records run metadata in the manifest.
+
+Relevant information can include:
+
+```text
+provider
+model
+runtime
+repair count
+token usage
+```
+
+The manifest allows experimental runs to be compared and analyzed.
+
+Conceptually:
+
+```text
+Pipeline Run
+     │
+     ├── Provider
+     ├── Model
+     ├── Runtime
+     ├── Repairs
+     └── Token Usage
+              │
+              ▼
+           Manifest
+```
+
+---
+
+# 17. DeepCode
+
+DeepCode is not treated as an LLM provider in the current architecture.
+
+The previous DeepCode provider/fallback execution path has been removed from the canonical pipeline.
+
+Current LLM providers:
+
+```text
+Gemini
+DeepSeek
+```
+
+An unsupported provider does not cause the system to silently execute DeepCode or another provider.
+
+DeepSeek and DeepCode are separate concepts:
+
+```text
+DeepSeek
+    = LLM provider
+
+DeepCode
+    = tooling/integration component
+```
+
+---
+
+# 18. Schemathesis and Nuclei
+
+Schemathesis and Nuclei are downstream components of the unified fuzzing flow.
+
+They are not tied to a specific LLM provider.
+
+The architecture is:
+
+```text
+Gemini ────────┐
+               │
+               ▼
+          Validated Payload
+               ▲
+               │
+DeepSeek ──────┘
+               │
+               ▼
+      Schemathesis / Nuclei
+               │
+               ▼
+           Findings
+```
+
+The LLM layer focuses on generation and repair.
+
+The downstream fuzzing and evaluation stages remain shared.
+
+---
+
+# 19. Testing
+
+Automated tests are located under:
+
+```text
+tests/
+```
+
+Run the test suite with:
+
+```bash
+python -m pytest tests/ -q
+```
+
+The tests cover the main provider and pipeline contracts, including:
+
+- provider resolution
+- supported provider handling
+- unsupported provider handling
+- runtime provider selection
+- model propagation
+- generation
+- repair
+- same-provider repair
+- telemetry
+- token usage propagation
+- manifest metadata
+- missing token usage handling
+- prevention of fake token values
+
+The test suite is intended to protect the unified architecture against regressions.
+
+---
+
+# 20. Running the Project
+
+## 20.1 Verify Python
+
+```bash
+python --version
+```
+
+## 20.2 Run automated tests
+
+```bash
+python -m pytest tests/ -q
+```
+
+## 20.3 Configure Gemini
+
+```bash
+export GEMINI_API_KEY="YOUR_GEMINI_KEY"
+```
+
+Then:
+
+```bash
+python scripts/run_pipeline.py --provider gemini
+```
+
+## 20.4 Configure DeepSeek
+
+```bash
+export DEEPSEEK_API_KEY="YOUR_DEEPSEEK_KEY"
+```
+
+Then:
+
+```bash
+python scripts/run_pipeline.py --provider deepseek
+```
+
+---
+
+# 21. Provider Comparison
+
+The architecture allows the same experiment to be executed with different providers.
+
+Example:
+
+```text
+                 Same OpenAPI
+                      │
+             ┌────────┴────────┐
+             │                 │
+             ▼                 ▼
+          Gemini            DeepSeek
+             │                 │
+             ▼                 ▼
+          Generate           Generate
+             │                 │
+             ▼                 ▼
+         Validate           Validate
+             │                 │
+             ▼                 ▼
+           Repair             Repair
+             │                 │
+             └────────┬────────┘
+                      ▼
+              Same downstream
+                 pipeline
+```
+
+For a fair comparison, keep the following constant:
+
+- OpenAPI/Swagger specification
+- API target
+- payload budget
+- validation rules
+- downstream fuzzing configuration
+- evaluation procedure
+
+Change only the LLM provider/model being evaluated.
+
+---
+
+# 22. Research Evaluation
+
+The architecture supports evaluation of questions such as:
+
+> How does the choice of LLM provider affect automated API attack-payload generation and fuzzing effectiveness?
+
+Potential evaluation metrics include:
+
+```text
+Payload validity
+Payload diversity
+Repair rate
+Successful execution rate
+Detected vulnerabilities
+False positives
+Token consumption
+Execution time
+```
+
+The provider abstraction allows additional LLM providers to be added without creating another fuzzing pipeline.
+
+A future provider can follow:
+
+```text
+Future Provider
+      ↓
+Implement common provider interface
+      ↓
+Register provider
+      ↓
+Use existing pipeline
+```
+
+---
+
+# 23. Development Principles
+
+The current implementation follows these principles:
+
+### One pipeline
+
+There is one canonical API fuzzing pipeline.
+
+Do not create separate:
+
+```text
+Gemini Pipeline
+DeepSeek Pipeline
+```
+
+Instead:
+
+```text
+Unified Pipeline
+       ↓
+Selected Provider
+```
+
+### Provider abstraction
+
+Provider-specific API interaction belongs in the provider layer.
+
+The main pipeline should remain provider-independent.
+
+### Same-provider repair
+
+A payload generated by Gemini is repaired by Gemini.
+
+A payload generated by DeepSeek is repaired by DeepSeek.
+
+### No silent fallback
+
+Unsupported providers must fail explicitly.
+
+### Honest telemetry
+
+Unavailable token usage must remain unavailable.
+
+Do not infer token usage from runtime.
+
+### Shared evaluation
+
+Provider comparison should use the same downstream fuzzing and evaluation pipeline.
+
+---
+
+# 24. Current Project State
+
+The current codebase contains:
+
+```text
+Unified LLM Provider Layer
+        ↓
+Gemini + DeepSeek
+        ↓
+Shared API Analysis
+        ↓
+Shared Prompt Construction
+        ↓
+Shared Validation
+        ↓
+Same-Provider Repair
+        ↓
+Shared Fuzzing
+        ↓
+Shared Evaluation
+        ↓
+Telemetry + Manifest
+```
+
+The main architecture is designed so that adding or comparing LLM providers does not require duplicating the API fuzzing pipeline.
+
+The canonical runtime entry point remains:
+
+```text
+scripts/run_pipeline.py
+```
+
+The canonical provider abstraction remains:
+
+```text
+core/providers.py
+```
