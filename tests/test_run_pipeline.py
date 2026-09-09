@@ -1,16 +1,11 @@
-"""tests/test_run_pipeline.py — Test cho scripts/run_pipeline.py.
-
-Mock hoàn toàn run_deepcode() (không gọi mạng/deepcode thật, không phụ thuộc
-rate limit của provider nào) để kiểm tra logic: happy path, repair-loop khi
-LLM trả sai định dạng, và dừng đúng sau MAX_REPAIR_ATTEMPTS lần thử.
-"""
+"""tests/test_run_pipeline.py — Validation for the canonical provider-based pipeline."""
 
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -36,28 +31,48 @@ VALID_PAYLOAD_JSON = json.dumps(
 )
 
 
+class FakeProvider:
+    def __init__(self, name: str = "gemini", model: str = "test-model"):
+        self.name = name
+        self.model = model
+
+    def generate(self, prompt: str, *, system_prompt=None, context=None):
+        return {"reply": VALID_PAYLOAD_JSON}
+
+    def repair(self, prompt: str, *, system_prompt=None, context=None):
+        return {"reply": VALID_PAYLOAD_JSON}
+
+
 def test_run_pipeline_happy_path(tmp_path: Path):
     output_path = tmp_path / "out.json"
-    with patch.object(pipeline, "run_deepcode", return_value=VALID_PAYLOAD_JSON) as mock_call:
-        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path)
+    fake_provider = FakeProvider()
+    with patch.object(pipeline, "get_provider", return_value=fake_provider) as mock_call:
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini")
 
     assert code == 0
-    assert mock_call.call_count == 1  # không cần repair
+    assert mock_call.call_count == 1
     written = json.loads(output_path.read_text(encoding="utf-8"))
     assert len(written) == 1
     assert written[0]["vulnerability_type"] == "BOLA"
-    assert (tmp_path / "context.json").is_file()  # B1 output cũng được ghi lại
+    assert (tmp_path / "context.json").is_file()
 
 
 def test_run_pipeline_retries_on_invalid_output_then_succeeds(tmp_path: Path):
     output_path = tmp_path / "out.json"
     manifest_path = tmp_path / "run_manifest.json"
+    fake_provider = FakeProvider()
     responses = ["khong phai json hop le", VALID_PAYLOAD_JSON]
-    with patch.object(pipeline, "run_deepcode", side_effect=responses) as mock_call:
-        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, manifest_path=manifest_path)
+
+    def fake_generate(prompt: str, *, system_prompt=None, context=None):
+        return {"reply": responses.pop(0)}
+
+    fake_provider.generate = fake_generate
+    fake_provider.repair = lambda prompt, *, system_prompt=None, context=None: {"reply": VALID_PAYLOAD_JSON}
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
+        code = pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini", manifest_path=manifest_path)
 
     assert code == 0
-    assert mock_call.call_count == 2  # 1 lần đầu + 1 lần repair
     assert output_path.is_file()
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["generation"]["repair_count"] == 1
@@ -68,15 +83,28 @@ def test_run_pipeline_retries_on_invalid_output_then_succeeds(tmp_path: Path):
 
 def test_run_pipeline_gives_up_after_max_repair_attempts(tmp_path: Path):
     output_path = tmp_path / "out.json"
-    with patch.object(pipeline, "run_deepcode", return_value="khong bao gio hop le"):
+    fake_provider = FakeProvider()
+    fake_provider.generate = lambda prompt, *, system_prompt=None, context=None: {"reply": "khong bao gio hop le"}
+    fake_provider.repair = lambda prompt, *, system_prompt=None, context=None: {"reply": "khong bao gio hop le"}
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
         with pytest.raises(pipeline.PipelineError, match="Hết"):
-            pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path)
+            pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini")
 
-    assert not output_path.is_file()  # không ghi output khi thất bại
+    assert not output_path.is_file()
 
 
-def test_run_pipeline_propagates_deepcode_process_error(tmp_path: Path):
+def test_run_pipeline_propagates_provider_error(tmp_path: Path):
     output_path = tmp_path / "out.json"
-    with patch.object(pipeline, "run_deepcode", side_effect=pipeline.PipelineError("deepcode thoát mã lỗi 1")):
+
+    def boom(*args, **kwargs):
+        raise pipeline.PipelineError("provider thoát mã lỗi 1")
+
+    fake_provider = Mock()
+    fake_provider.name = "gemini"
+    fake_provider.model = "test-model"
+    fake_provider.generate.side_effect = pipeline.PipelineError("provider thoát mã lỗi 1")
+
+    with patch.object(pipeline, "get_provider", return_value=fake_provider):
         with pytest.raises(pipeline.PipelineError, match="thoát mã lỗi"):
-            pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path)
+            pipeline.run_pipeline(FIXTURE, output_path, cwd=tmp_path, provider="gemini")

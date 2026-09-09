@@ -12,7 +12,7 @@ class LLMUsage:
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
     available: bool = False
-    source: str = "not_exposed_by_deepcode"
+    source: str = "provider"
 
     @property
     def total_tokens(self) -> int | None:
@@ -20,12 +20,54 @@ class LLMUsage:
             return None
         return self.prompt_tokens + self.completion_tokens
 
+    @staticmethod
+    def _normalize_usage(usage: dict[str, Any] | None) -> dict[str, int | None] | None:
+        if not isinstance(usage, dict):
+            return None
+
+        prompt = (
+            usage.get("prompt_tokens")
+            if usage.get("prompt_tokens") is not None
+            else usage.get("promptTokenCount")
+            if usage.get("promptTokenCount") is not None
+            else usage.get("input_tokens")
+        )
+        completion = (
+            usage.get("completion_tokens")
+            if usage.get("completion_tokens") is not None
+            else usage.get("completionTokenCount")
+            if usage.get("completionTokenCount") is not None
+            else usage.get("output_tokens")
+            if usage.get("output_tokens") is not None
+            else usage.get("candidatesTokenCount")
+        )
+        total = usage.get("total_tokens")
+        if total is None and prompt is not None and completion is not None:
+            total = int(prompt) + int(completion)
+        if prompt is None and total is not None and completion is not None:
+            prompt = int(total) - int(completion)
+        if completion is None and total is not None and prompt is not None:
+            completion = int(total) - int(prompt)
+
+        return {
+            "prompt_tokens": int(prompt) if prompt is not None else None,
+            "completion_tokens": int(completion) if completion is not None else None,
+            "total_tokens": int(total) if total is not None else None,
+        }
+
     def add(self, usage: dict[str, Any] | None, source: str = "provider") -> None:
-        if not usage:
+        normalized = self._normalize_usage(usage)
+        if normalized is None:
             return
-        prompt = usage.get("prompt_tokens", usage.get("promptTokenCount"))
-        completion = usage.get("completion_tokens", usage.get("candidatesTokenCount"))
+        prompt = normalized["prompt_tokens"]
+        completion = normalized["completion_tokens"]
+        if prompt is None and completion is None and normalized["total_tokens"] is not None:
+            return
         if prompt is None or completion is None:
+            self.prompt_tokens = self.prompt_tokens if self.prompt_tokens is not None else prompt
+            self.completion_tokens = self.completion_tokens if self.completion_tokens is not None else completion
+            self.available = prompt is not None or completion is not None
+            self.source = source
             return
         self.prompt_tokens = (self.prompt_tokens or 0) + int(prompt)
         self.completion_tokens = (self.completion_tokens or 0) + int(completion)
