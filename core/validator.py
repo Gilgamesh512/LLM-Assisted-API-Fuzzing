@@ -1,24 +1,10 @@
 """
-core/validator.py — Task B4: Chuẩn hoá & xác thực output của LLM (JSON Guardrails).
+core/validator.py — Chuẩn hoá & xác thực output của LLM (Pydantic Guardrails & Self-Repair).
 
-DeepSeek (qua skill api-payload-generator, xem .deepcode/skills/) phải trả về
-một mảng JSON payload tấn công có cấu trúc. Module này:
-
-1. Trích JSON từ text trả về của LLM (kể cả khi LLM bọc trong ```json ... ```).
-2. Validate cấu trúc bằng Pydantic — đúng field, đúng kiểu, đúng enum.
-3. Nếu sai định dạng, sinh ra một "repair prompt" mô tả rõ lỗi để gửi ngược
-   lại cho LLM sinh lại (đúng quy trình tự sửa lỗi mô tả trong kế hoạch B4).
-4. Sau khi hợp lệ, payload này là thứ duy nhất được bàn giao cho Thành viên C
-   (fuzzing engine) — đảm bảo 100% payload trước khi chuyển đi đều đúng cấu trúc.
-
-Sử dụng nhanh:
-    from core.validator import validate_llm_output
-
-    result = validate_llm_output(raw_text_from_llm)
-    if result.ok:
-        payloads = result.payloads          # list[AttackPayload]
-    else:
-        next_prompt = result.repair_prompt   # gửi lại cho LLM
+1. Trích xuất JSON từ text phản hồi của LLM (loại bỏ markdown fence, text thừa).
+2. Xác thực cấu trúc bằng Pydantic v2 (AttackPayload schema, enum, locations).
+3. Tự động sinh "repair prompt" khi output sai định dạng để gửi lại cho LLM tự sửa.
+4. Cung cấp bridge chuyển đổi tương thích sang các định dạng downstream fuzzer.
 """
 
 from __future__ import annotations
@@ -31,11 +17,11 @@ from typing import Any
 
 from pydantic import BaseModel, Field, TypeAdapter, ValidationError
 
-MAX_REPAIR_ATTEMPTS = 3  # đồng bộ với điều kiện dừng "3 lần thử thất bại" của phần C
+MAX_REPAIR_ATTEMPTS = 3
 
 
 class VulnerabilityType(str, Enum):
-    """Các nhóm lỗ hổng mà đề tài nhắm tới (khớp với api_inventory.csv của A)."""
+    """Các nhóm lỗ hổng mà hệ thống nhắm tới."""
 
     SQLI = "SQLi"
     BOLA = "BOLA"
@@ -84,7 +70,6 @@ def _extract_json_text(raw_text: str) -> str:
         return fence_match.group(1).strip()
 
     text = raw_text.strip()
-    # Nếu LLM chèn giải thích trước/sau JSON, cắt theo cặp ngoặc ngoài cùng đầu tiên.
     start_candidates = [i for i in (text.find("["), text.find("{")) if i != -1]
     if not start_candidates:
         return text
@@ -149,7 +134,7 @@ def validate_llm_output(raw_text: str, attempt: int = 1) -> ValidationResult:
         )
 
     if isinstance(data, dict) and "payloads" in data:
-        data = data["payloads"]  # chấp nhận cả trường hợp LLM bọc trong {"payloads": [...]}
+        data = data["payloads"]
 
     try:
         payloads = _payload_list_adapter.validate_python(data)
@@ -166,8 +151,94 @@ def validate_llm_output(raw_text: str, attempt: int = 1) -> ValidationResult:
 
 
 def payloads_to_jsonable(payloads: list[AttackPayload]) -> list[dict[str, Any]]:
-    """Chuyển list[AttackPayload] thành list[dict] JSON-serializable cho Thành viên C."""
+    """Chuyển list[AttackPayload] thành list[dict] JSON-serializable."""
     return [p.model_dump(mode="json") for p in payloads]
+
+
+def convert_attack_payload_to_fuzz(
+    payload: AttackPayload | dict[str, Any],
+    target_app: str = "",
+) -> dict[str, Any]:
+    """Convert AttackPayload sang định dạng Fuzzing tương thích downstream engines."""
+    d = payload if isinstance(payload, dict) else payload.model_dump(mode="json")
+    raw_vuln = d.get("vulnerability_type", "")
+    if hasattr(raw_vuln, "value"):
+        raw_vuln = raw_vuln.value
+    raw_vuln_str = str(raw_vuln).strip()
+
+    vuln_map = {
+        "SQLi": "SQL_INJECTION",
+        "BOLA": "BOLA",
+        "SSRF": "SSRF",
+        "JWT/Auth": "AUTH_BYPASS",
+        "FileUpload": "PATH_TRAVERSAL",
+        "XSS": "XSS",
+        "Other": "OTHER",
+    }
+    attack_type = vuln_map.get(raw_vuln_str, raw_vuln_str.upper())
+
+    raw_indicator = str(d.get("expected_indicator") or "")
+    expected_signal = [
+        s.strip()
+        for s in re.split(r"[,;|\n]+", raw_indicator)
+        if s.strip()
+    ] or ([raw_indicator] if raw_indicator else [])
+
+    location_raw = str(d.get("location") or d.get("param_location") or "query")
+    if hasattr(location_raw, "value"):
+        location_raw = location_raw.value
+
+    return {
+        "endpoint": str(d.get("path") or d.get("endpoint") or ""),
+        "method": str(d.get("method", "GET")).upper(),
+        "target_param": str(d.get("target_parameter") or d.get("target_param") or ""),
+        "param_location": str(location_raw),
+        "attack_type": attack_type,
+        "payload_value": d.get("payload_value"),
+        "owasp_category": f"OWASP {raw_vuln_str}",
+        "context": str(d.get("rationale") or d.get("context") or ""),
+        "expected_signal": expected_signal,
+        "target_app": target_app or str(d.get("target_app") or ""),
+    }
+
+
+def convert_fuzz_to_attack_payload(fuzz_data: dict[str, Any]) -> AttackPayload:
+    """Convert định dạng Fuzzing ngược lại thành AttackPayload chuẩn."""
+    attack_type = str(fuzz_data.get("attack_type", "")).upper()
+    reverse_vuln_map = {
+        "SQL_INJECTION": VulnerabilityType.SQLI,
+        "SQLI": VulnerabilityType.SQLI,
+        "BOLA": VulnerabilityType.BOLA,
+        "SSRF": VulnerabilityType.SSRF,
+        "AUTH_BYPASS": VulnerabilityType.JWT_AUTH,
+        "JWT/AUTH": VulnerabilityType.JWT_AUTH,
+        "PATH_TRAVERSAL": VulnerabilityType.FILE_UPLOAD,
+        "COMMAND_INJECTION": VulnerabilityType.OTHER,
+        "MASS_ASSIGNMENT": VulnerabilityType.OTHER,
+        "XSS": VulnerabilityType.XSS,
+    }
+    vuln_type = reverse_vuln_map.get(attack_type, VulnerabilityType.OTHER)
+
+    param_loc_str = str(fuzz_data.get("param_location") or "query").lower()
+    valid_locations = {loc.value: loc for loc in ParamLocation}
+    location = valid_locations.get(param_loc_str, ParamLocation.QUERY)
+
+    expected_signal = fuzz_data.get("expected_signal")
+    if isinstance(expected_signal, list):
+        expected_indicator = ", ".join(str(s) for s in expected_signal) or "response anomaly"
+    else:
+        expected_indicator = str(expected_signal or "response anomaly")
+
+    return AttackPayload(
+        method=str(fuzz_data.get("method", "GET")).upper(),
+        path=str(fuzz_data.get("endpoint") or fuzz_data.get("path") or "/"),
+        target_parameter=str(fuzz_data.get("target_param") or fuzz_data.get("target_parameter") or "param"),
+        location=location,
+        vulnerability_type=vuln_type,
+        payload_value=str(fuzz_data.get("payload_value", "")),
+        rationale=str(fuzz_data.get("context") or fuzz_data.get("rationale") or "Contextual test payload"),
+        expected_indicator=expected_indicator,
+    )
 
 
 __all__ = [
@@ -179,4 +250,6 @@ __all__ = [
     "validate_llm_output",
     "build_repair_prompt",
     "payloads_to_jsonable",
+    "convert_attack_payload_to_fuzz",
+    "convert_fuzz_to_attack_payload",
 ]

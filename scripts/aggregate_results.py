@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -9,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.finding import normalize_findings, severity_rank
+from core.sarif import export_sarif_file
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -119,10 +119,11 @@ def dedup(findings: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
-def write_outputs(findings: list[dict[str, Any]], out_dir: Path) -> tuple[Path, Path]:
+def write_outputs(findings: list[dict[str, Any]], out_dir: Path) -> tuple[Path, Path, Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     ndjson_path = out_dir / "findings_summary.ndjson"
     csv_path = out_dir / "findings_summary.csv"
+    sarif_path = out_dir / "findings_summary.sarif"
 
     with open(ndjson_path, "w", encoding="utf-8", newline="\n") as fh:
         for f in findings:
@@ -134,7 +135,9 @@ def write_outputs(findings: list[dict[str, Any]], out_dir: Path) -> tuple[Path, 
         for f in findings:
             w.writerow({k: f.get(k) for k in UNIFIED_FIELDS})
 
-    return csv_path, ndjson_path
+    export_sarif_file(findings, str(sarif_path))
+
+    return csv_path, ndjson_path, sarif_path
 
 
 def print_summary(findings: list[dict[str, Any]]) -> None:
@@ -209,12 +212,13 @@ def main(argv: list[str] | None = None) -> int:
     findings = normalize_findings(findings)
     findings.sort(key=lambda f: (-severity_rank(f["severity"]), f["tool"], f["endpoint"]))
 
-    csv_path, ndjson_path = write_outputs(findings, Path(args.out_dir))
+    csv_path, ndjson_path, sarif_path = write_outputs(findings, Path(args.out_dir))
     print()
     print_summary(findings)
     print()
     print(f"[agg] Máy đọc  : {ndjson_path}")
     print(f"[agg] Người đọc: {csv_path}")
+    print(f"[agg] OASIS SARIF: {sarif_path}")
     return 0
 
 

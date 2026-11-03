@@ -12,6 +12,7 @@ SQL_ERROR_KEYWORDS = [
 LEAK_KEYWORDS = ["traceback", "stack trace", "exception", "internal server error"]
 ANOMALY_STATUS = {500, 502, 503, 504}
 TIMEOUT_HINTS = ["timeout", "timed out", "read timeout"]
+OAST_KEYWORDS = ["interactsh", "oast", "collaborator", "dns interaction", "out-of-band"]
 
 
 class Signal(str, Enum):
@@ -54,7 +55,7 @@ class Analysis:
         return [c.finding for c in (self.successes + self.anomalies)]
 
 
-def classify_one(f: dict[str, Any]) -> Classified:
+def classify_one(f: dict[str, Any], timing_threshold_ms: float = 4000.0) -> Classified:
     evidence = str(f.get("evidence", "")).lower()
     status = f.get("http_status")
     try:
@@ -62,21 +63,48 @@ def classify_one(f: dict[str, Any]) -> Classified:
     except (TypeError, ValueError):
         status = None
 
+    # 1. Matcher trúng chuẩn
     if f.get("confirmed"):
         return Classified(f, Signal.SUCCESS, "matcher trúng / signal xác nhận")
+
+    # 2. Tương tác Out-of-band (OAST / Collaborator)
+    if f.get("oast_confirmed") or any(k in evidence for k in OAST_KEYWORDS):
+        return Classified(f, Signal.SUCCESS, "tương tác out-of-band (OAST)")
+
+    # 3. Phân tích khác biệt quyền truy cập (BOLA / IDOR)
+    if f.get("bola_detected") or f.get("differential_match"):
+        return Classified(f, Signal.SUCCESS, "truy cập trái phép đối tượng (BOLA/IDOR)")
+
+    # 4. Phân tích độ trễ phản hồi (Time-based Blind SQLi / ReDoS)
+    resp_time = f.get("response_time_ms")
+    if resp_time is not None:
+        try:
+            if float(resp_time) >= timing_threshold_ms:
+                return Classified(f, Signal.ANOMALY, f"độ trễ bất thường ({resp_time}ms - time-based blind)")
+        except (TypeError, ValueError):
+            pass
+
+    # 5. Rò rỉ thông báo lỗi cú pháp SQL
     if any(k in evidence for k in SQL_ERROR_KEYWORDS):
         return Classified(f, Signal.ANOMALY, "rò rỉ lỗi SQL trong response")
+
+    # 6. Mã lỗi máy chủ nội bộ HTTP 5xx
     if status in ANOMALY_STATUS:
         return Classified(f, Signal.ANOMALY, f"HTTP {status}")
+
+    # 7. Quá thời gian chờ (Timeout)
     if any(k in evidence for k in TIMEOUT_HINTS):
         return Classified(f, Signal.ANOMALY, "timeout")
+
+    # 8. Rò rỉ Stack trace / Internal exception
     if any(k in evidence for k in LEAK_KEYWORDS):
         return Classified(f, Signal.ANOMALY, "rò rỉ lỗi/stack trace")
+
     return Classified(f, Signal.MISS, "không có tín hiệu bất thường")
 
 
-def analyze(findings: list[dict[str, Any]]) -> Analysis:
-    return Analysis([classify_one(f) for f in findings])
+def analyze(findings: list[dict[str, Any]], timing_threshold_ms: float = 4000.0) -> Analysis:
+    return Analysis([classify_one(f, timing_threshold_ms=timing_threshold_ms) for f in findings])
 
 
 def _fmt(c: Classified) -> str:
@@ -99,8 +127,7 @@ def summarize_for_llm(analysis: Analysis, max_examples: int = 5) -> str:
         lines.append("PAYLOAD KHÔNG TRÚNG (đổi kỹ thuật/encoding khác, đừng lặp lại y hệt):")
         for c in analysis.misses[:max_examples]:
             lines.append(f"  - {_fmt(c)}")
-    lines.append(
-        "HÃY SINH THẾ HỆ PAYLOAD MỚI: giữ & biến hóa các payload đã trúng, thay các payload "
-        "không trúng bằng kỹ thuật/encoding khác. Chỉ trả JSON theo đúng schema."
-    )
     return "\n".join(lines)
+
+
+__all__ = ["Signal", "Classified", "Analysis", "classify_one", "analyze", "summarize_for_llm"]

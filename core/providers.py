@@ -6,6 +6,7 @@ from typing import Any, Protocol
 
 from core.deepseek_client import call_deepseek
 from core.gemini_client import call_gemini
+from core.local_client import call_local
 
 
 class LLMProvider(Protocol):
@@ -71,9 +72,33 @@ class DeepSeekProvider(BaseProvider):
         return call_deepseek(prompt, model=self.model, system_prompt=system_prompt, api_key=os.environ.get(self.api_key_env))
 
 
+class LocalProvider(BaseProvider):
+    """Provider phục vụ chạy mô hình Offline/On-premise (Ollama, vLLM, Azure OpenAI Private)."""
+    name = "local"
+    default_model = "qwen2.5-coder"
+    api_key_env = "LOCAL_LLM_API_KEY"
+
+    def resolve_api_key(self) -> str:
+        # Local LLM không bắt buộc key bí mật, dùng dummy key nếu không có
+        return os.environ.get(self.api_key_env, "ollama").strip() or "ollama"
+
+    def generate(self, prompt: str, *, system_prompt: str | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        base_url = os.environ.get("LOCAL_LLM_URL", "http://localhost:11434/v1")
+        return call_local(
+            prompt,
+            model=self.model,
+            base_url=base_url,
+            system_prompt=system_prompt,
+            api_key=self.resolve_api_key(),
+        )
+
+
 PROVIDERS: dict[str, type[BaseProvider]] = {
     "gemini": GeminiProvider,
     "deepseek": DeepSeekProvider,
+    "local": LocalProvider,
+    "ollama": LocalProvider,
+    "vllm": LocalProvider,
 }
 
 
@@ -86,4 +111,12 @@ def get_provider(provider_name: str, model: str | None = None) -> BaseProvider:
     return provider_cls(model=model)
 
 
-__all__ = ["LLMProvider", "BaseProvider", "GeminiProvider", "DeepSeekProvider", "PROVIDERS", "get_provider"]
+__all__ = [
+    "LLMProvider",
+    "BaseProvider",
+    "GeminiProvider",
+    "DeepSeekProvider",
+    "LocalProvider",
+    "PROVIDERS",
+    "get_provider",
+]

@@ -22,8 +22,15 @@ from core.analyzer import SpecLoadError, analyze_file  # noqa: E402
 from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E402
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
 from core.providers import get_provider  # noqa: E402
+from core.safety import filter_safe_payloads  # noqa: E402
+from core.sanitizer import mask_spec_data  # noqa: E402
 from core.telemetry import RunTelemetry  # noqa: E402
-from core.validator import MAX_REPAIR_ATTEMPTS, payloads_to_jsonable, validate_llm_output  # noqa: E402
+from core.validator import (  # noqa: E402
+    MAX_REPAIR_ATTEMPTS,
+    convert_attack_payload_to_fuzz,
+    payloads_to_jsonable,
+    validate_llm_output,
+)
 
 SKILL_NAME = "api-payload-generator"
 
@@ -46,7 +53,7 @@ def _resolve_provider(provider_name: str | None, model: str | None = None):
     normalized = (provider_name or "").strip().lower()
     if not normalized:
         raise PipelineError(
-            "Provider is required. Supported providers: gemini, deepseek."
+            "Provider is required. Supported providers: gemini, deepseek, local, ollama, vllm."
         )
     try:
         provider_instance = get_provider(normalized, model=model)
@@ -127,6 +134,10 @@ def run_pipeline(
     provider: str | None = None,
     model: str | None = None,
     manifest_path: Path | None = None,
+    export_fuzz_path: Path | None = None,
+    safe_mode: bool = False,
+    mask_data: bool = False,
+    target_app: str | None = None,
 ) -> int:
     telemetry = RunTelemetry()
     run_id = new_run_id()
@@ -139,6 +150,11 @@ def run_pipeline(
     endpoints = run_b1_analyze(spec_path, context_path)
     telemetry.stop("analyzer")
     print(f"[pipeline]   {len(endpoints)} endpoint.")
+
+    if mask_data:
+        print("[pipeline] Data Masking — Redacting PII & internal hostnames...")
+        masked_endpoints, _ = mask_spec_data(endpoints)
+        context_path.write_text(json.dumps(masked_endpoints, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[pipeline] B2/B3 — Generate payloads via {resolved_provider} provider...")
     telemetry.start("llm_generation")
@@ -183,8 +199,30 @@ def run_pipeline(
             f"Output cuối cùng:\n{raw}"
         )
 
-    payloads = payloads_to_jsonable(result.payloads or [])
+    raw_payloads = [p.model_dump(mode="json") for p in (result.payloads or [])]
+    if safe_mode:
+        print("[pipeline] Safe Mode — Filtering out destructive payloads...")
+        safe_list, blocked = filter_safe_payloads(raw_payloads, safe_mode=True)
+        if blocked:
+            print(f"[pipeline]   Đã lọc bỏ {len(blocked)} payload có nguy cơ phá hoại.")
+        payloads = safe_list
+    else:
+        payloads = raw_payloads
+
     output_path.write_text(json.dumps(payloads, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    if export_fuzz_path:
+        fuzz_items = [
+            convert_attack_payload_to_fuzz(p, target_app=target_app or Path(spec_path).stem)
+            for p in payloads
+        ]
+        export_fuzz_path.parent.mkdir(parents=True, exist_ok=True)
+        export_fuzz_path.write_text(
+            json.dumps({"payloads": fuzz_items}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"[pipeline] Đã xuất {len(fuzz_items)} payload tương thích Fuzzing vào: {export_fuzz_path}")
+
     manifest = build_manifest(
         run_id=run_id,
         target_name=Path(spec_path).stem,
@@ -218,12 +256,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", default="payloads_validated.json", help="File JSON output cho Thành viên C")
     parser.add_argument(
         "--provider",
-        choices=["gemini", "deepseek"],
+        choices=["gemini", "deepseek", "local", "ollama", "vllm"],
         required=True,
         help="LLM provider runtime used by the pipeline",
     )
     parser.add_argument("--model", help="Model name passed to the selected provider runtime")
     parser.add_argument("--manifest", type=Path, help="Đường dẫn manifest output")
+    parser.add_argument("--export-fuzz", type=Path, help="File JSON xuất định dạng tương thích Schemathesis")
+    parser.add_argument("--safe-mode", action="store_true", help="Chế độ an toàn (bỏ qua phương thức DELETE và endpoint phá hoại)")
+    parser.add_argument("--mask-data", action="store_true", help="Mask thông tin nhạy cảm (IP/Email/Domain) trước khi gửi LLM")
+    parser.add_argument("--target-app", help="Định danh target app cho payload")
     args = parser.parse_args(argv)
 
     try:
@@ -234,6 +276,10 @@ def main(argv: list[str] | None = None) -> int:
             provider=args.provider,
             model=args.model,
             manifest_path=args.manifest,
+            export_fuzz_path=args.export_fuzz,
+            safe_mode=args.safe_mode,
+            mask_data=args.mask_data,
+            target_app=args.target_app,
         )
     except PipelineError as exc:
         print(f"[pipeline] Lỗi: {exc}", file=sys.stderr)

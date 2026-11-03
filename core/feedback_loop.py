@@ -61,8 +61,8 @@ def run_feedback_loop(
     results_dir: Path | str = REPO_ROOT / "results" / "feedback",
     on_generation: Optional[Callable[[GenerationRecord], None]] = None,
 ) -> LoopResult:
-    """Vòng lặp feedback-guided: B sinh payload -> C bắn (Người 1) -> oracle phân tích (Người 2)
-    -> phản hồi cho B sinh thế hệ mới. Dừng khi: khai thác thành công, hoặc `max_no_progress`
+    """Vòng lặp feedback-guided: Sinh payload -> Bắn Fuzzing -> Oracle phân tích
+    -> Phản hồi kết quả cho LLM sinh thế hệ mới. Dừng khi: khai thác thành công, hoặc `max_no_progress`
     thế hệ liên tiếp không có tín hiệu mới, hoặc hết `max_generations`.
     """
     target_name = getattr(target, "name", str(target))

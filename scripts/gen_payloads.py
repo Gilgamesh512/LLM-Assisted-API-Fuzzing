@@ -13,7 +13,7 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / "Nuclei" / "executor"))
 
 from core.analyzer import analyze_file, SpecLoadError  # noqa: E402
-from core.gemini_client import call_gemini, GeminiAPIError  # noqa: E402
+from core.providers import get_provider  # noqa: E402
 from core.validator import _extract_json_text  # noqa: E402
 from core import target_config as tc  # noqa: E402
 from schemas import Suite  # type: ignore  # noqa: E402
@@ -62,18 +62,22 @@ def _ensure_utf8_console() -> None:
                 pass
 
 
-def _gemini_json(
+def _llm_json(
     system_prompt: str,
     user_prompt: str,
     *,
     retries: int = 2,
+    provider: str = "gemini",
+    model: str | None = None,
 ) -> Any:
     last_error: Exception | None = None
     last_raw = ""
 
+    provider_instance = get_provider(provider, model=model)
+
     for attempt in range(1, retries + 1):
         try:
-            result = call_gemini(user_prompt, system_prompt=system_prompt)
+            result = provider_instance.generate(user_prompt, system_prompt=system_prompt)
             raw = str(result.get("reply", ""))
             last_raw = raw
             text = _extract_json_text(raw)
@@ -86,17 +90,28 @@ def _gemini_json(
             if not isinstance(data, list):
                 data = [data]
             return data
-        except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        except (json.JSONDecodeError, ValueError, TypeError, RuntimeError) as exc:
             last_error = exc
             print(
-                f"[gen]   Gemini output không parse được JSON "
+                f"[gen]   {provider} output không parse được JSON "
                 f"(attempt {attempt}/{retries})"
             )
 
     raise ValueError(
-        f"Gemini không trả JSON hợp lệ sau {retries} lần thử.\n"
+        f"{provider} không trả JSON hợp lệ sau {retries} lần thử.\n"
         f"--- raw cuối ---\n{last_raw[:1200]}"
     ) from last_error
+
+
+def _gemini_json(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    retries: int = 2,
+    provider: str = "gemini",
+    model: str | None = None,
+) -> Any:
+    return _llm_json(system_prompt, user_prompt, retries=retries, provider=provider, model=model)
 
 
 def _compact_endpoints(spec_path: str, max_endpoints: int) -> list[dict[str, Any]]:
@@ -188,15 +203,32 @@ def _validate_rest(items: list[Any], target_app: str) -> list[dict[str, Any]]:
     return valid
 
 
-def gen_rest(target_app: str, spec_path: str, out_path: str, max_endpoints: int) -> int:
-    print(f"[gen] REST '{target_app}' <- {Path(spec_path).name}")
+def gen_rest(
+    target_app: str,
+    spec_path: str,
+    out_path: str,
+    max_endpoints: int,
+    provider: str = "gemini",
+    model: str | None = None,
+) -> int:
+    print(f"[gen] REST '{target_app}' <- {Path(spec_path).name} (via {provider})")
     endpoints = _compact_endpoints(spec_path, max_endpoints)
     print(f"[gen]   {len(endpoints)} endpoint đưa vào prompt")
-    items = _gemini_json(_REST_SYSTEM, _rest_prompt(target_app, _endpoints_for_prompt(endpoints)))
+    items = _llm_json(
+        _REST_SYSTEM,
+        _rest_prompt(target_app, _endpoints_for_prompt(endpoints)),
+        provider=provider,
+        model=model,
+    )
     valid = _validate_rest(items, target_app)
     if not valid:
         print("[gen]   LLM trả 0 payload hợp lệ, thử lại lần 2...")
-        items = _gemini_json(_REST_SYSTEM, _rest_prompt(target_app, _endpoints_for_prompt(endpoints)))
+        items = _llm_json(
+            _REST_SYSTEM,
+            _rest_prompt(target_app, _endpoints_for_prompt(endpoints)),
+            provider=provider,
+            model=model,
+        )
         valid = _validate_rest(items, target_app)
     if not valid:
         raise RuntimeError(f"Không sinh được payload REST hợp lệ cho {target_app}")
@@ -260,14 +292,20 @@ def _validate_gql(items: list[Any]) -> list[dict[str, Any]]:
     return valid
 
 
-def gen_graphql(max_endpoints: int, schema: str, out: str) -> int:
-    print(f"[gen] GraphQL <- {Path(schema).name}")
+def gen_graphql(
+    max_endpoints: int,
+    schema: str,
+    out: str,
+    provider: str = "gemini",
+    model: str | None = None,
+) -> int:
+    print(f"[gen] GraphQL <- {Path(schema).name} (via {provider})")
     fields = _gql_fields(schema)
-    items = _gemini_json(_GQL_SYSTEM, _gql_prompt(fields))
+    items = _llm_json(_GQL_SYSTEM, _gql_prompt(fields), provider=provider, model=model)
     valid = _validate_gql(items)
     if not valid:
         print("[gen]   LLM trả 0 payload hợp lệ, thử lại lần 2...")
-        items = _gemini_json(_GQL_SYSTEM, _gql_prompt(fields))
+        items = _llm_json(_GQL_SYSTEM, _gql_prompt(fields), provider=provider, model=model)
         valid = _validate_gql(items)
     if not valid:
         raise RuntimeError("Không sinh được payload GraphQL hợp lệ")
@@ -315,13 +353,19 @@ def _nuclei_prompt(target_app: str, base_url: str, endpoints_text: str) -> str:
 
 
 def build_nuclei_suite(
-    app: str, spec: str, base_url: str, max_endpoints: int, feedback: str | None = None
+    app: str,
+    spec: str,
+    base_url: str,
+    max_endpoints: int,
+    feedback: str | None = None,
+    provider: str = "gemini",
+    model: str | None = None,
 ) -> "Suite":
     endpoints = _compact_endpoints(spec, max_endpoints)
     prompt = _nuclei_prompt(app, base_url, _endpoints_for_prompt(endpoints))
     if feedback:
         prompt += "\n\n=== PHẢN HỒI RUNTIME (dựa vào đây để cải thiện thế hệ này) ===\n" + feedback
-    data = _gemini_json(_NUCLEI_SYSTEM, prompt)
+    data = _llm_json(_NUCLEI_SYSTEM, prompt, provider=provider, model=model)
     if isinstance(data, list):
         data = {"target": base_url, "variables": {}, "test_cases": data}
     data.setdefault("target", base_url)
@@ -351,9 +395,17 @@ def build_nuclei_suite(
         raise RuntimeError(f"Suite nuclei không hợp lệ: {exc}") from exc
 
 
-def gen_nuclei(max_endpoints: int, app: str, spec: str, base_url: str, out: str) -> int:
-    print(f"[gen] Nuclei suite '{app}' <- {Path(spec).name}")
-    suite = build_nuclei_suite(app, spec, base_url, max_endpoints)
+def gen_nuclei(
+    max_endpoints: int,
+    app: str,
+    spec: str,
+    base_url: str,
+    out: str,
+    provider: str = "gemini",
+    model: str | None = None,
+) -> int:
+    print(f"[gen] Nuclei suite '{app}' <- {Path(spec).name} (via {provider})")
+    suite = build_nuclei_suite(app, spec, base_url, max_endpoints, provider=provider, model=model)
     Path(out).parent.mkdir(parents=True, exist_ok=True)
     Path(out).write_text(
         json.dumps(suite.model_dump(), ensure_ascii=False, indent=2), encoding="utf-8"
@@ -371,6 +423,8 @@ def main(argv: list[str] | None = None) -> int:
         default="all",
         help="Chỉ sinh một nhóm (mặc định: all = cả 4 file).",
     )
+    parser.add_argument("--provider", choices=["gemini", "deepseek", "local", "ollama", "vllm"], default="gemini", help="LLM Provider để sinh payload")
+    parser.add_argument("--model", help="Model name cho LLM Provider")
     parser.add_argument("--max-endpoints", type=int, default=25, help="Số endpoint tối đa đưa vào prompt.")
     parser.add_argument("--config", help="File config target (mặc định config/targets.yaml).")
     parser.add_argument("--target", help="Chỉ sinh cho 1 target trong config (mặc định: tất cả).")
@@ -389,16 +443,16 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             if args.kind == "rest":
                 out = args.out or f"Schemathesis/payload_{args.target_app}.json"
-                total += gen_rest(args.target_app, args.spec, out, args.max_endpoints)
+                total += gen_rest(args.target_app, args.spec, out, args.max_endpoints, provider=args.provider, model=args.model)
             elif args.kind == "graphql":
                 out = args.out or f"Schemathesis/payload_{args.target_app}_graphql.json"
-                total += gen_graphql(args.max_endpoints, schema=args.spec, out=out)
+                total += gen_graphql(args.max_endpoints, schema=args.spec, out=out, provider=args.provider, model=args.model)
             elif args.kind == "nuclei":
                 if not args.base_url:
                     print("[gen] LỖI: --kind nuclei cần --base-url http://target.", file=sys.stderr)
                     return 1
                 out = args.out or f"Nuclei/executor/benchmark/suite_{args.target_app}.json"
-                total += gen_nuclei(args.max_endpoints, app=args.target_app, spec=args.spec, base_url=args.base_url, out=out)
+                total += gen_nuclei(args.max_endpoints, app=args.target_app, spec=args.spec, base_url=args.base_url, out=out, provider=args.provider, model=args.model)
             print(f"\n[gen] XONG (ad-hoc) — {total} payload/test case. Output: {out}")
             return 0
 
@@ -408,16 +462,16 @@ def main(argv: list[str] | None = None) -> int:
             t = tc.get_target(name, cfg_path)
             spec = t.resolve_spec_path()
             if t.kind == "rest" and args.only in ("rest", "all"):
-                total += gen_rest(name, spec, t.resolved_payload_out(), args.max_endpoints)
+                total += gen_rest(name, spec, t.resolved_payload_out(), args.max_endpoints, provider=args.provider, model=args.model)
             if t.kind == "graphql" and args.only in ("graphql", "all"):
-                total += gen_graphql(args.max_endpoints, schema=spec, out=t.resolved_payload_out())
+                total += gen_graphql(args.max_endpoints, schema=spec, out=t.resolved_payload_out(), provider=args.provider, model=args.model)
             if t.kind == "rest" and t.nuclei_out and args.only in ("nuclei", "all"):
-                total += gen_nuclei(args.max_endpoints, app=name, spec=spec, base_url=t.base_url, out=t.nuclei_out)
-    except (SpecLoadError, GeminiAPIError, RuntimeError, ValueError) as exc:
+                total += gen_nuclei(args.max_endpoints, app=name, spec=spec, base_url=t.base_url, out=t.nuclei_out, provider=args.provider, model=args.model)
+    except (SpecLoadError, RuntimeError, ValueError) as exc:
         print(f"[gen] LỖI: {exc}", file=sys.stderr)
         return 1
 
-    print(f"\n[gen] XONG — tổng {total} payload/test case đã sinh & validate.")
+    print(f"\n[gen] XONG — tổng {total} payload/test case đã sinh & validate (qua {args.provider}).")
     return 0
 
 

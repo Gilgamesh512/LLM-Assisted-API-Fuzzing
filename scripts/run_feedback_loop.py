@@ -30,7 +30,7 @@ def make_real_gen_fn(max_endpoints: int):
     def gen_fn(target: Any, feedback: str | None, seeds, generation: int):
         spec = target.resolve_spec_path()
         tag = "gen0" if feedback is None else f"gen{generation} (có phản hồi)"
-        print(f"[loop]   B sinh payload {tag} cho '{target.name}'...")
+        print(f"[loop]   Sinh payload {tag} cho '{target.name}'...")
         return gen_payloads.build_nuclei_suite(
             target.name, spec, target.base_url, max_endpoints, feedback=feedback
         )
@@ -42,7 +42,7 @@ def make_real_fire_fn():
     from executor import run_nuclei
 
     def fire_fn(suite: Any, target: Any) -> list[dict[str, Any]]:
-        print(f"[loop]   Người 1: bắn {len(suite.test_cases)} test case qua Nuclei -> {target.base_url}")
+        print(f"[loop]   Fuzzing engine: bắn {len(suite.test_cases)} test case qua Nuclei -> {target.base_url}")
         result = run_nuclei.execute(suite)
         out_dir = REPO_ROOT / "results" / "nuclei"
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -81,13 +81,13 @@ def make_mock_fns():
     state = {"i": 0}
 
     def gen_fn(target, feedback, seeds, generation):
-        print(f"[loop]   (mock) B sinh payload gen{generation}" + (" có phản hồi" if feedback else ""))
+        print(f"[loop]   (mock) Sinh payload gen{generation}" + (" có phản hồi" if feedback else ""))
         return f"mock-suite-gen{generation}"
 
     def fire_fn(suite, target):
         i = min(state["i"], len(scenarios) - 1)
         state["i"] += 1
-        print(f"[loop]   (mock) Người 1: bắn payload gen -> giả lập kết quả kịch bản {i}")
+        print(f"[loop]   (mock) Fuzzing engine: bắn payload gen -> giả lập kết quả kịch bản {i}")
         return scenarios[i]
 
     return gen_fn, fire_fn
@@ -103,7 +103,7 @@ def _print_gen(rec: GenerationRecord) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     _ensure_utf8_console()
-    parser = argparse.ArgumentParser(description="Phần C — vòng phản hồi runtime (B->fire->oracle->B).")
+    parser = argparse.ArgumentParser(description="Vòng phản hồi runtime (Generate -> Fuzz -> Oracle -> Feedback Loop).")
     parser.add_argument("--target", default="vampi", help="Tên target trong config/targets.yaml.")
     parser.add_argument("--config", help="File config target (mặc định config/targets.yaml).")
     parser.add_argument("--max-gen", type=int, default=3, help="Số thế hệ payload tối đa.")
@@ -133,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             max_no_progress=args.max_no_progress,
             on_generation=_print_gen,
         )
-    except Exception as exc:  # nuclei/LLM/target lỗi -> báo rõ, không nuốt
+    except Exception as exc:
         print(f"[loop] LỖI khi chạy vòng lặp: {exc}", file=sys.stderr)
         return 1
 
