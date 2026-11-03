@@ -18,9 +18,19 @@ Gemini, DeepSeek, and Local LLMs are provider implementations of the same LLM la
 
 ---
 
-# 🚀 Quick Start — Unified CLI Entrypoint (`fuzzer.py`)
+# 🚀 Quick Start — Web Management UI or Single-Command CLI
 
-The fastest way to run the entire pipeline is via the single-command CLI entrypoint `fuzzer.py`:
+### Option A: Clean Web Management UI (Interactive Form & Live Console)
+Launch the interactive web console (Light theme: White, Soft Slate, Indigo — no distracting SOC/SIEM dark neon):
+```bash
+# Start Web UI and automatically open browser
+python fuzzer.py ui --open-browser
+# or directly:
+python web_ui.py
+```
+*Access in browser at:* `http://127.0.0.1:5000`
+
+### Option B: Unified CLI Entrypoint (`fuzzer.py scan`)
 
 ```bash
 # 1. Full Lifecycle Scan in Dry-Run Mode (Spec analysis -> Masking -> LLM gen -> Guardrails -> Safe mode -> SARIF)
@@ -29,22 +39,40 @@ python fuzzer.py scan dataset/vampi_openapi.json --provider gemini --dry-run
 # 2. Live Fuzzing Scan against target API (Concurrent multi-threading)
 python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local --concurrency 10
 
-# 3. Authenticated Scan with Bearer JWT Token
-python fuzzer.py scan dataset/crapi_openapi.json -u http://localhost:8888 --provider gemini --token "Bearer eyJhbGci..." --fail-on high
+# 3. Enterprise Real-world Target (Custom IP/Domain, Self-signed SSL, Proxy, Custom Headers, Rate Limiting)
+python fuzzer.py scan https://staging-api.corp.com/v3/api-docs \
+  -u https://staging-api.corp.com \
+  --target-name "CoreBankingSvc" \
+  --insecure \
+  --header "X-Tenant-Id: corp_vn" \
+  --delay 50 --max-rps 20 \
+  --token "Bearer eyJhbGci..."
 
-# 4. Safe Mode Controls
-python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --no-safe-mode
+# 4. Auto-Discovery on Unknown Target (Automatically probe /openapi.json, /v3/api-docs...)
+python fuzzer.py scan auto -u http://192.168.1.100:8000 --auto-discover --target-name "InternalMicroservice"
+
+# 5. Schema-less / Raw Endpoints Fuzzing (When target has no Swagger/OpenAPI)
+python fuzzer.py scan endpoints.txt -u http://10.0.0.15:8080 --target-name "LegacyOrdersAPI"
 ```
 
 ### CLI Arguments for `fuzzer.py scan`:
-- `spec`: Path to OpenAPI/Swagger spec (JSON or YAML).
-- `-u, --target-url`: Target server URL for live fuzzing. Omit or use `--dry-run` to generate payloads without network requests.
+- `spec`: Path to OpenAPI/Swagger spec (JSON/YAML), remote URL (`https://...`), raw endpoints list (`.txt`), or `'auto'`.
+- `-u, --target-url`: Target server IP or URL for live fuzzing.
+- `--target-name, --app`: Custom target application name for SARIF / CSV reporting.
 - `-p, --provider`: LLM provider (`gemini`, `deepseek`, `local`, `ollama`, `vllm`).
 - `-m, --model`: Specific LLM model name.
 - `-o, --out-dir`: Output directory for reports (default: `results`).
 - `-t, --token, --auth-token`: Bearer token or credentials header value.
 - `--auth-header`: Header name (default: `Authorization`).
 - `--auth-prefix`: Token prefix (default: `Bearer `).
+- `-H, --header`: Additional custom HTTP headers (e.g. `-H "X-API-Key: 123" -H "X-Tenant: corp"`).
+- `-k, --insecure`: Skip SSL certificate verification (useful for internal IPs / self-signed certs).
+- `--proxy`: HTTP/HTTPS upstream proxy (e.g. `http://127.0.0.1:8080` for Burp Suite / OWASP ZAP).
+- `--delay`: Delay between requests in milliseconds (avoids overloading staging environments).
+- `--max-rps`: Rate limiting - maximum requests per second.
+- `--scope`: Add allowed hostnames (Scope Guard to prevent fuzzing out-of-scope third parties).
+- `--auto-discover`: Automatically probe for OpenAPI specs on the target host.
+- `--raw-endpoints`: Path to raw endpoints list (`.txt` or JSON) when OpenAPI spec is unavailable.
 - `-c, --concurrency`: Number of concurrent worker threads (default: `5`).
 - `--timeout`: HTTP timeout per request in seconds (default: `8.0`).
 - `--no-safe-mode`: Disable safe mode (allows testing `DELETE` and destructive endpoints).

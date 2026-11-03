@@ -1,8 +1,8 @@
-# Nguồn DUY NHẤT khai báo target cho toàn pipeline (B phân tích spec + C fuzzing).
+# Nguồn khai báo target cho toàn pipeline (B phân tích spec + C fuzzing).
 # Thêm/đổi target chỉ sửa file này, không đụng code.
 # KHÔNG để secret ở đây: password/token dùng token_env trỏ tới biến môi trường (.env).
 
-allowed_targets: [vampi, crapi, dvga]      # chỉ target trong danh sách này mới được bắn
+allowed_targets: [vampi, crapi, dvga, enterprise_staging, corporate_api]
 
 targets:
   vampi:
@@ -35,13 +35,22 @@ targets:
     auth:
       type: login
 
-  # Ví dụ target web THẬT (bỏ comment + thêm vào allowed_targets để dùng).
-  # Cấu trúc y hệt, chỉ đổi giá trị -> pipeline không cần biết là lab hay web thật.
-  # myprod:
-  #   kind: rest
-  #   base_url: https://api.congty.com
-  #   spec_url: https://api.congty.com/openapi.json   # tải spec từ URL
-  #   payload_out: Schemathesis/payload_myprod.json
-  #   auth:
-  #     type: static
-  #     token_env: MYPROD_TOKEN                        # token đặt ở .env, không hardcode
+  # Target môi trường Staging / UAT thực tế của Doanh nghiệp (URL hoặc IP nội bộ)
+  enterprise_staging:
+    kind: rest
+    base_url: https://staging-api.enterprise.local
+    spec_url: https://staging-api.enterprise.local/v3/api-docs
+    payload_out: results/payloads_enterprise.json
+    auth:
+      type: static
+      token_env: ENTERPRISE_BEARER_TOKEN
+
+  # Microservice nội bộ doanh nghiệp qua IP
+  corporate_api:
+    kind: rest
+    base_url: http://10.0.1.50:8000
+    spec_url: http://10.0.1.50:8000/openapi.json
+    payload_out: results/payloads_corporate.json
+    auth:
+      type: static
+      token_env: CORP_API_KEY

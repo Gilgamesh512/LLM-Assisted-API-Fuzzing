@@ -45,12 +45,24 @@ Target kiểm thử chuẩn mực cục bộ: **OWASP crAPI, DVGA, VAmPI** (ch�
 python -m pytest tests/ -v
 ```
 
-## Vận hành nhanh (CLI duy nhất)
+## Vận hành nhanh (Web UI hoặc CLI)
 
 ```bash
-# Quét toàn bộ vòng đời (Parse -> Mask -> Sinh -> Validate -> Safe Mode -> Báo cáo SARIF)
+# Cách 1: Khởi động Web UI điều khiển trực quan (Theme Trắng - Xanh - Tím nhạt thanh lịch)
+python fuzzer.py ui --open-browser
+# hoặc:
+python web_ui.py
+
+# Cách 2: Quét trực tiếp qua CLI
+# Quét toàn bộ vòng đời (Parse -> Mask -> Sinh -> Validate -> Safe Mode -> Báo cáo SARIF + HTML)
 python fuzzer.py scan dataset/vampi_openapi.json --provider gemini --dry-run
 
 # Chạy Fuzzing trực tiếp vào máy chủ API (hỗ trợ auth token & đa luồng)
 python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local --token "Bearer test-jwt-token" --concurrency 10
+
+# Quét Target thực tế Doanh nghiệp (URL/IP nội bộ, SSL tự ký, Proxy Burp Suite, Custom Headers, Rate Limiting)
+python fuzzer.py scan https://api.corp.local/v3/api-docs -u https://api.corp.local --target-name "CoreBankingSvc" --insecure -H "X-Tenant: corp_vn" --delay 50 --max-rps 20
+
+# Tự động dò tìm OpenAPI spec (Auto-Discovery) trên bất kỳ IP/URL nào
+python fuzzer.py scan auto -u http://192.168.1.100:8000 --auto-discover --target-name "InternalMicroservice"
 ```

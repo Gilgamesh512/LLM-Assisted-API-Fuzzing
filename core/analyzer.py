@@ -15,10 +15,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
 
+import requests
 import yaml
 
 HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "trace"}
@@ -26,35 +28,324 @@ HTTP_METHODS = {"get", "put", "post", "delete", "options", "head", "patch", "tra
 # Các security scheme được coi là "JWT-like" khi tên/scheme gợi ý bearer/JWT.
 _JWT_HINT_NAMES = {"authorization", "bearer", "jwt", "token", "x-access-token"}
 
+# Danh sách đường dẫn tài liệu OpenAPI/Swagger thông dụng trên hệ thống thực tế doanh nghiệp
+COMMON_SPEC_PATHS = [
+    "/openapi.json",
+    "/swagger.json",
+    "/v3/api-docs",
+    "/v3/api-docs/swagger-config",
+    "/api-docs",
+    "/swagger/v1/swagger.json",
+    "/api/v1/swagger.json",
+    "/api/swagger.json",
+    "/docs/openapi.json",
+    "/api/openapi.json",
+    "/swagger.yaml",
+    "/openapi.yaml",
+]
+
 
 class SpecLoadError(RuntimeError):
     """Lỗi khi không đọc/parse được file đặc tả API."""
 
 
-def load_spec(path: str | Path) -> dict[str, Any]:
-    """Đọc file OpenAPI/Swagger JSON hoặc YAML thành dict."""
-    p = Path(path)
-    if not p.is_file():
-        raise SpecLoadError(f"Không tìm thấy file: {p}")
+def load_spec(
+    path_or_url: str | Path,
+    *,
+    insecure: bool = False,
+    proxy: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 20.0,
+) -> dict[str, Any]:
+    """Đọc file OpenAPI/Swagger JSON hoặc YAML từ đường dẫn cục bộ hoặc Remote URL thành dict."""
+    target_str = str(path_or_url).strip()
 
-    raw = p.read_text(encoding="utf-8")
-    try:
-        if p.suffix.lower() in {".yaml", ".yml"}:
-            spec = yaml.safe_load(raw)
-        else:
+    # Trường hợp 1: Tải từ URL từ xa (HTTP/HTTPS)
+    if target_str.startswith(("http://", "https://")):
+        proxies = {"http": proxy, "https": proxy} if proxy else None
+        try:
+            resp = requests.get(
+                target_str,
+                timeout=timeout,
+                verify=not insecure,
+                proxies=proxies,
+                headers=headers or {},
+            )
+            resp.raise_for_status()
+            raw = resp.text
+        except requests.RequestException as exc:
+            raise SpecLoadError(f"Không thể tải spec từ URL từ xa '{target_str}': {exc}") from exc
+
+        try:
+            spec = json.loads(raw)
+        except json.JSONDecodeError:
             try:
-                spec = json.loads(raw)
-            except json.JSONDecodeError:
-                # một số Swagger export vẫn là YAML dù đuôi .json
                 spec = yaml.safe_load(raw)
-    except (yaml.YAMLError, json.JSONDecodeError) as exc:
-        raise SpecLoadError(f"File đặc tả không hợp lệ ({p.name}): {exc}") from exc
+            except yaml.YAMLError as y_exc:
+                raise SpecLoadError(f"Dữ liệu từ URL '{target_str}' không phải JSON/YAML hợp lệ: {y_exc}") from y_exc
+
+    # Trường hợp 2: Đọc từ file cục bộ
+    else:
+        p = Path(path_or_url)
+        if not p.is_file():
+            raise SpecLoadError(f"Không tìm thấy file: {p}")
+
+        raw = p.read_text(encoding="utf-8")
+        try:
+            if p.suffix.lower() in {".yaml", ".yml"}:
+                spec = yaml.safe_load(raw)
+            else:
+                try:
+                    spec = json.loads(raw)
+                except json.JSONDecodeError:
+                    spec = yaml.safe_load(raw)
+        except (yaml.YAMLError, json.JSONDecodeError) as exc:
+            raise SpecLoadError(f"File đặc tả không hợp lệ ({p.name}): {exc}") from exc
 
     if not isinstance(spec, dict):
-        raise SpecLoadError(f"File đặc tả không đúng cấu trúc object gốc: {p.name}")
+        raise SpecLoadError(f"Đặc tả không đúng cấu trúc object gốc: {target_str}")
+
+    # Nhận diện Postman Collection v2 / v2.1
+    if "item" in spec and ("info" in spec or "variable" in spec):
+        return _convert_postman_to_openapi(spec)
+
     if "paths" not in spec:
-        raise SpecLoadError(f"File đặc tả thiếu khoá 'paths' (có phải OpenAPI/Swagger không?): {p.name}")
+        raise SpecLoadError(f"Đặc tả thiếu khoá 'paths' (có phải OpenAPI/Swagger không?): {target_str}")
+
     return spec
+
+
+def _convert_postman_to_openapi(postman_data: dict[str, Any]) -> dict[str, Any]:
+    """Chuyển đổi sơ bộ Postman Collection sang OpenAPI paths để LLM có thể phân tích."""
+    paths: dict[str, Any] = {}
+
+    def _extract_items(items: list[Any]) -> None:
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if "item" in item and isinstance(item["item"], list):
+                _extract_items(item["item"])
+                continue
+
+            req = item.get("request")
+            if not req or not isinstance(req, dict):
+                continue
+
+            method = str(req.get("method") or "GET").lower()
+            url_obj = req.get("url")
+            raw_path = "/"
+
+            if isinstance(url_obj, str):
+                raw_path = "/" + url_obj.split("://", 1)[-1].partition("/")[2]
+            elif isinstance(url_obj, dict):
+                raw_url = url_obj.get("raw", "")
+                if "://" in raw_url:
+                    raw_path = "/" + raw_url.split("://", 1)[-1].partition("/")[2]
+                elif "path" in url_obj and isinstance(url_obj["path"], list):
+                    raw_path = "/" + "/".join(str(p) for p in url_obj["path"])
+
+            # Loại bỏ query string nếu còn dính trong path
+            raw_path = raw_path.split("?", 1)[0]
+
+            # Chuẩn hóa biến Postman :id hoặc {{id}} thành {id}
+            raw_path = re.sub(r":([a-zA-Z0-9_]+)", r"{\1}", raw_path)
+            raw_path = re.sub(r"\{\{([a-zA-Z0-9_]+)\}\}", r"{\1}", raw_path)
+            if not raw_path.startswith("/"):
+                raw_path = "/" + raw_path
+
+            # Tham số URL query & header
+            parameters: list[dict[str, Any]] = []
+            if isinstance(url_obj, dict) and "query" in url_obj and isinstance(url_obj["query"], list):
+                for q in url_obj["query"]:
+                    if isinstance(q, dict) and "key" in q:
+                        parameters.append({
+                            "name": str(q["key"]),
+                            "in": "query",
+                            "schema": {"type": "string"},
+                            "description": q.get("description", ""),
+                        })
+
+            # Tham số Body (raw JSON, urlencoded, formdata)
+            req_body = req.get("body")
+            request_body_schema: dict[str, Any] | None = None
+            if isinstance(req_body, dict):
+                mode = req_body.get("mode")
+                if mode == "raw":
+                    raw_content = req_body.get("raw", "")
+                    try:
+                        parsed_body = json.loads(raw_content)
+                        if isinstance(parsed_body, dict):
+                            props = {k: {"type": type(v).__name__} for k, v in parsed_body.items()}
+                            request_body_schema = {
+                                "content": {
+                                    "application/json": {
+                                        "schema": {"type": "object", "properties": props}
+                                    }
+                                }
+                            }
+                    except Exception:
+                        pass
+                elif mode in ("urlencoded", "formdata"):
+                    form_items = req_body.get(mode, [])
+                    if isinstance(form_items, list):
+                        props = {f["key"]: {"type": "string"} for f in form_items if isinstance(f, dict) and "key" in f}
+                        request_body_schema = {
+                            "content": {
+                                "application/x-www-form-urlencoded": {
+                                    "schema": {"type": "object", "properties": props}
+                                }
+                            }
+                        }
+
+            op: dict[str, Any] = {
+                "operationId": item.get("name", f"{method}_{raw_path}"),
+                "summary": item.get("name", ""),
+                "parameters": parameters,
+            }
+            if request_body_schema:
+                op["requestBody"] = request_body_schema
+
+            paths.setdefault(raw_path, {})[method] = op
+
+    _extract_items(postman_data.get("item", []))
+    return {
+        "openapi": "3.0.0",
+        "info": postman_data.get("info", {"title": "Postman Converted API", "version": "1.0.0"}),
+        "paths": paths,
+    }
+
+
+def probe_openapi_spec(
+    base_url: str,
+    *,
+    insecure: bool = False,
+    proxy: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 4.0,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Thăm dò tự động các đường dẫn OpenAPI/Swagger phổ biến trên host/IP mục tiêu.
+    
+    Trả về (spec_dict, matched_spec_url) nếu tìm thấy, hoặc (None, None).
+    """
+    clean_base = base_url.rstrip("/")
+    proxies = {"http": proxy, "https": proxy} if proxy else None
+    req_headers = {"Accept": "application/json, application/yaml, */*"}
+    if headers:
+        req_headers.update(headers)
+
+    for spec_path in COMMON_SPEC_PATHS:
+        candidate_url = f"{clean_base}{spec_path}"
+        try:
+            resp = requests.get(
+                candidate_url,
+                timeout=timeout,
+                verify=not insecure,
+                proxies=proxies,
+                headers=req_headers,
+                allow_redirects=True,
+            )
+            if resp.status_code == 200 and len(resp.content) > 10:
+                raw = resp.text
+                try:
+                    data = json.loads(raw)
+                except Exception:
+                    try:
+                        data = yaml.safe_load(raw)
+                    except Exception:
+                        data = None
+
+                if isinstance(data, dict) and ("paths" in data or "swagger" in data or "openapi" in data):
+                    return data, candidate_url
+        except Exception:
+            continue
+
+    return None, None
+
+
+def parse_raw_endpoints(
+    content_or_path: str | Path,
+) -> list[dict[str, Any]]:
+    """Phân tích danh sách endpoints thô (tệp .txt hoặc JSON) khi API mục tiêu không có OpenAPI/Swagger.
+    
+    Định dạng file .txt:
+      GET /api/v1/users
+      GET /api/v1/users/{id}
+      POST /api/v1/login
+      DELETE /api/v1/orders/{order_id}
+      
+    Định dạng JSON:
+      [{"method": "GET", "path": "/api/v1/users/{id}"}]
+    """
+    content = ""
+    p = Path(content_or_path)
+    if p.is_file():
+        content = p.read_text(encoding="utf-8")
+    else:
+        content = str(content_or_path)
+
+    # Thử parse JSON trước
+    try:
+        data = json.loads(content)
+        if isinstance(data, list):
+            endpoints: list[dict[str, Any]] = []
+            for item in data:
+                if isinstance(item, dict) and "path" in item:
+                    method = str(item.get("method", "GET")).upper()
+                    path = str(item["path"])
+                    params = item.get("parameters", [])
+                    # Tự động trích xuất path params nếu có dạng {param}
+                    for m in re.finditer(r"\{([a-zA-Z0-9_]+)\}", path):
+                        param_name = m.group(1)
+                        if not any(p.get("name") == param_name for p in params):
+                            params.append({"name": param_name, "in": "path", "type": "string", "required": True})
+                    endpoints.append({
+                        "method": method,
+                        "path": path,
+                        "operation_id": item.get("operation_id", f"{method.lower()}_{path.replace('/', '_')}"),
+                        "tags": item.get("tags", ["raw"]),
+                        "parameters": params,
+                        "authentication": item.get("authentication", False),
+                        "jwt": item.get("jwt", False),
+                        "file_upload": item.get("file_upload", False),
+                    })
+            if endpoints:
+                endpoints.sort(key=lambda e: (e["path"], e["method"]))
+                return endpoints
+    except Exception:
+        pass
+
+    # Parse từng dòng text (ví dụ: 'GET /api/v1/users/{id}')
+    endpoints_from_txt: list[dict[str, Any]] = []
+    lines = [ln.strip() for ln in content.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+    for line in lines:
+        parts = line.split(maxsplit=1)
+        if len(parts) == 2 and parts[0].upper() in {"GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"}:
+            method = parts[0].upper()
+            path = parts[1].strip()
+        else:
+            method = "GET"
+            path = parts[0].strip()
+
+        if not path.startswith("/"):
+            path = "/" + path
+
+        params: list[dict[str, Any]] = []
+        for m in re.finditer(r"\{([a-zA-Z0-9_]+)\}", path):
+            params.append({"name": m.group(1), "in": "path", "type": "string", "required": True})
+
+        endpoints_from_txt.append({
+            "method": method,
+            "path": path,
+            "operation_id": f"{method.lower()}_{path.replace('/', '_')}",
+            "tags": ["raw"],
+            "parameters": params,
+            "authentication": False,
+            "jwt": False,
+            "file_upload": False,
+        })
+
+    endpoints_from_txt.sort(key=lambda e: (e["path"], e["method"]))
+    return endpoints_from_txt
 
 
 def _resolve_ref(spec: dict[str, Any], ref: str, base_dir: Path | None = None) -> Any:
@@ -364,10 +655,27 @@ def analyze(spec: dict[str, Any], base_dir: Path | None = None) -> list[dict[str
     return endpoints
 
 
-def analyze_file(path: str | Path) -> list[dict[str, Any]]:
-    p = Path(path)
-    spec = load_spec(p)
-    return analyze(spec, base_dir=p.parent)
+def analyze_file(
+    path_or_url: str | Path,
+    *,
+    insecure: bool = False,
+    proxy: str | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 20.0,
+) -> list[dict[str, Any]]:
+    """Phân tích đặc tả API từ file cục bộ hoặc remote URL.
+    
+    Nếu là file text thô (không có format OpenAPI), tự động chuyển hướng qua parse_raw_endpoints.
+    """
+    target_str = str(path_or_url).strip()
+    if not target_str.startswith(("http://", "https://")):
+        p = Path(path_or_url)
+        if p.is_file() and p.suffix.lower() in {".txt", ".endpoints"}:
+            return parse_raw_endpoints(p)
+
+    spec = load_spec(path_or_url, insecure=insecure, proxy=proxy, headers=headers, timeout=timeout)
+    base_dir = Path(path_or_url).parent if not target_str.startswith(("http://", "https://")) else None
+    return analyze(spec, base_dir=base_dir)
 
 
 def _ensure_utf8_console() -> None:
