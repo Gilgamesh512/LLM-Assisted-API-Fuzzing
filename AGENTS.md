@@ -51,6 +51,6 @@ python -m pytest tests/ -v
 # Quét toàn bộ vòng đời (Parse -> Mask -> Sinh -> Validate -> Safe Mode -> Báo cáo SARIF)
 python fuzzer.py scan dataset/vampi_openapi.json --provider gemini --dry-run
 
-# Chạy Fuzzing trực tiếp vào máy chủ API
-python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local
+# Chạy Fuzzing trực tiếp vào máy chủ API (hỗ trợ auth token & đa luồng)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local --token "Bearer test-jwt-token" --concurrency 10
 ```

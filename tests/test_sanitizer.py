@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.sanitizer import DataMasker, mask_spec_data, unmask_text
+from core.sanitizer import DataMasker, mask_spec_data, unmask_text, unmask_object
 
 
 def test_data_masker_masks_internal_ip_and_domain():
@@ -37,3 +37,23 @@ def test_mask_spec_data_structure():
     restored = unmask_text(text_rep, reverse_map)
     assert "boss@megacorp.com" in restored
     assert "192.168.1.100" in restored
+
+
+def test_unmask_object():
+    reverse_map = {
+        "user_1@example.mock": "admin@company.com",
+        "api-service-1.example.com": "api.internal",
+    }
+    payloads = [
+        {
+            "method": "POST",
+            "path": "/api-service-1.example.com/login",
+            "payload_value": "user_1@example.mock",
+            "nested": {"user": "user_1@example.mock"},
+        }
+    ]
+    restored = unmask_object(payloads, reverse_map)
+    assert restored[0]["path"] == "/api.internal/login"
+    assert restored[0]["payload_value"] == "admin@company.com"
+    assert restored[0]["nested"]["user"] == "admin@company.com"
+

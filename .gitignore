@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 .pytest_cache/
 node_modules/
+LLM/node_modules/
+.venv/
+env/
+venv/
 .env
 .env.*
 *.env

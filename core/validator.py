@@ -106,10 +106,16 @@ def build_repair_prompt(raw_text: str, error_message: str, attempt: int) -> str:
         f"{raw_text}\n\n"
         "Lỗi cấu trúc:\n"
         f"{error_message}\n\n"
-        "Hãy sinh lại DUY NHẤT một JSON array hợp lệ, không kèm giải thích, "
-        "không bọc trong markdown, tuân thủ đúng schema AttackPayload đã cung cấp "
-        "(method, path, target_parameter, location, vulnerability_type, payload_value, "
-        "rationale, expected_indicator)."
+        "Hãy sinh lại DUY NHẤT một JSON array hợp lệ, không kèm giải thích, không bọc markdown, "
+        "tuân thủ đúng schema AttackPayload (tuyệt đối không thêm trường thừa ngoài 8 trường):\n"
+        "- method: string (GET, POST, PUT, DELETE,...)\n"
+        "- path: string\n"
+        "- target_parameter: string\n"
+        "- location: CHỈ ĐƯỢC CHỌN 1 trong: ['path', 'query', 'header', 'cookie', 'body', 'form-data']\n"
+        "- vulnerability_type: CHỈ ĐƯỢC CHỌN 1 trong: ['SQLi', 'BOLA', 'SSRF', 'JWT/Auth', 'FileUpload', 'XSS', 'Other']\n"
+        "- payload_value: string\n"
+        "- rationale: string\n"
+        "- expected_indicator: string"
     )
 
 

@@ -4,6 +4,29 @@ This runbook describes the current operational workflow of the repository as imp
 
 > Use only against VAmPI, crAPI, DVGA, or another explicitly authorized target.
 
+---
+
+## ⚡ Unified Single-Command Execution (`fuzzer.py`)
+
+Operators can execute the complete end-to-end fuzzing lifecycle in a single command via `fuzzer.py`:
+
+```bash
+# Dry run scan (Parse spec -> Mask PII -> LLM Gen -> Guardrails -> Safe Mode -> SARIF Report)
+python fuzzer.py scan dataset/vampi_openapi.json --provider gemini --dry-run
+
+# Live target scan with concurrency and auth token
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local --token "Bearer test-jwt-token" --concurrency 10
+```
+
+Artifacts generated in `results/`:
+- `findings_summary.sarif` — OASIS SARIF v2.1.0 standard report.
+- `findings_summary.csv` — Tabular summary of all test findings.
+- `findings_summary.ndjson` — Machine-readable event log.
+- `payloads_validated.json` — Verified attack payloads conforming to Pydantic Guardrails schema.
+- `manifest.json` — Comprehensive run provenance and telemetry metadata.
+
+---
+
 ## 1. Standard Environment
 
 From the repository root:

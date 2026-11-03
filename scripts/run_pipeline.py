@@ -23,7 +23,7 @@ from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E4
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
 from core.providers import get_provider  # noqa: E402
 from core.safety import filter_safe_payloads  # noqa: E402
-from core.sanitizer import mask_spec_data  # noqa: E402
+from core.sanitizer import mask_spec_data, unmask_object  # noqa: E402
 from core.telemetry import RunTelemetry  # noqa: E402
 from core.validator import (  # noqa: E402
     MAX_REPAIR_ATTEMPTS,
@@ -151,9 +151,10 @@ def run_pipeline(
     telemetry.stop("analyzer")
     print(f"[pipeline]   {len(endpoints)} endpoint.")
 
+    reverse_mapping: dict[str, str] = {}
     if mask_data:
         print("[pipeline] Data Masking — Redacting PII & internal hostnames...")
-        masked_endpoints, _ = mask_spec_data(endpoints)
+        masked_endpoints, reverse_mapping = mask_spec_data(endpoints)
         context_path.write_text(json.dumps(masked_endpoints, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print(f"[pipeline] B2/B3 — Generate payloads via {resolved_provider} provider...")
@@ -200,6 +201,9 @@ def run_pipeline(
         )
 
     raw_payloads = [p.model_dump(mode="json") for p in (result.payloads or [])]
+    if mask_data and reverse_mapping:
+        print(f"[pipeline] Unmasking payloads — Restoring {len(reverse_mapping)} sanitized entities...")
+        raw_payloads = unmask_object(raw_payloads, reverse_mapping)
     if safe_mode:
         print("[pipeline] Safe Mode — Filtering out destructive payloads...")
         safe_list, blocked = filter_safe_payloads(raw_payloads, safe_mode=True)

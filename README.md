@@ -1,19 +1,57 @@
 # LLM-Assisted API Fuzzing
 
-LLM-assisted API fuzzing framework for generating, validating, repairing, and evaluating API attack payloads from OpenAPI/Swagger specifications.
+LLM-assisted API fuzzing framework for generating, validating, repairing, executing, and evaluating context-aware API attack payloads from OpenAPI/Swagger specifications.
 
 The project follows a unified architecture with interchangeable LLM providers.
 
 Current supported providers:
 
-- Gemini
-- DeepSeek
+- **Google Gemini** (`gemini` - default model: `gemini-3.7-flash`)
+- **DeepSeek** (`deepseek` - default model: `deepseek-chat`)
+- **Local / On-Premise LLMs** (`local`, `ollama`, `vllm` - OpenAI compatible, default: `qwen2.5-coder`)
 
 The project follows the principle:
 
 > **ONE PIPELINE, MULTIPLE LLM PROVIDERS**
 
-Gemini and DeepSeek are provider implementations of the same LLM layer. They do not use separate fuzzing pipelines.
+Gemini, DeepSeek, and Local LLMs are provider implementations of the same LLM layer. They share the exact same OpenAPI parsing, Data Masking/Unmasking, Pydantic Guardrails, Safe Mode filtering, Concurrent Execution Engine, Enhanced Oracle analysis, and OASIS SARIF v2.1.0 reporting.
+
+---
+
+# 🚀 Quick Start — Unified CLI Entrypoint (`fuzzer.py`)
+
+The fastest way to run the entire pipeline is via the single-command CLI entrypoint `fuzzer.py`:
+
+```bash
+# 1. Full Lifecycle Scan in Dry-Run Mode (Spec analysis -> Masking -> LLM gen -> Guardrails -> Safe mode -> SARIF)
+python fuzzer.py scan dataset/vampi_openapi.json --provider gemini --dry-run
+
+# 2. Live Fuzzing Scan against target API (Concurrent multi-threading)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider local --concurrency 10
+
+# 3. Authenticated Scan with Bearer JWT Token
+python fuzzer.py scan dataset/crapi_openapi.json -u http://localhost:8888 --provider gemini --token "Bearer eyJhbGci..." --fail-on high
+
+# 4. Safe Mode Controls
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --no-safe-mode
+```
+
+### CLI Arguments for `fuzzer.py scan`:
+- `spec`: Path to OpenAPI/Swagger spec (JSON or YAML).
+- `-u, --target-url`: Target server URL for live fuzzing. Omit or use `--dry-run` to generate payloads without network requests.
+- `-p, --provider`: LLM provider (`gemini`, `deepseek`, `local`, `ollama`, `vllm`).
+- `-m, --model`: Specific LLM model name.
+- `-o, --out-dir`: Output directory for reports (default: `results`).
+- `-t, --token, --auth-token`: Bearer token or credentials header value.
+- `--auth-header`: Header name (default: `Authorization`).
+- `--auth-prefix`: Token prefix (default: `Bearer `).
+- `-c, --concurrency`: Number of concurrent worker threads (default: `5`).
+- `--timeout`: HTTP timeout per request in seconds (default: `8.0`).
+- `--no-safe-mode`: Disable safe mode (allows testing `DELETE` and destructive endpoints).
+- `--no-mask-data`: Disable PII & internal IP/domain masking.
+- `--fail-on`: Security gate threshold (`critical`, `high`, `medium`, `low`, `info`).
+
+---
 
 ---
 

@@ -121,4 +121,20 @@ def unmask_text(text: str, reverse_mapping: dict[str, str]) -> str:
     return result
 
 
-__all__ = ["DataMasker", "mask_spec_data", "unmask_text"]
+def unmask_object(obj: Any, reverse_mapping: dict[str, str]) -> Any:
+    """Khôi phục object (dict, list, str) đã bị mask về nguyên trạng."""
+    if not reverse_mapping:
+        return obj
+    if isinstance(obj, str):
+        return unmask_text(obj, reverse_mapping)
+    if isinstance(obj, dict):
+        return {
+            unmask_text(str(k), reverse_mapping): unmask_object(v, reverse_mapping)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, list):
+        return [unmask_object(item, reverse_mapping) for item in obj]
+    return obj
+
+
+__all__ = ["DataMasker", "mask_spec_data", "unmask_text", "unmask_object"]

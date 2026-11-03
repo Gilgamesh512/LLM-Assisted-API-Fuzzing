@@ -1,0 +1,31 @@
+# Git & IDE
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv
+env/
+venv/
+.pytest_cache
+.hypothesis
+
+# Node.js & Monorepo (DeepCode monorepo)
+node_modules/
+LLM/node_modules/
+LLM/packages/*/dist
+LLM/packages/*/node_modules
+
+# Temporary & Results
+results/
+results/*
+.spec_cache/
+*.log
+.env*
