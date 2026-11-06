@@ -4,15 +4,62 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-SQL_ERROR_KEYWORDS = [
-    "sql syntax", "syntax error", "sqlstate", "sqlite", "mysql",
-    "postgresql", "psql", "odbc", "ora-", "unclosed quotation",
+SQL_ERROR_EXPLICIT_KEYWORDS = [
+    "sql syntax", "sqlstate", "unclosed quotation",
     "you have an error in your sql", "warning: pg_", "sqlexception",
+    "syntax error at or near", "syntax error in sql",
+    "sqlite3.operationalerror", "sqlite3.error", "mysql_fetch",
+    "microsoft ole db provider for sql server", "odbc driver",
+    "driver [{sql server}]", "postgresql query failed",
+    "org.hibernate.exception", "ora-0", "ora-1",
 ]
-LEAK_KEYWORDS = ["traceback", "stack trace", "exception", "internal server error"]
+DB_CONTEXT_KEYWORDS = ["sqlite", "mysql", "postgresql", "psql", "odbc", "oracle", "mariadb", "database"]
+CLIENT_SYNTAX_HINTS = ["json syntax", "jsondecodeerror", "yaml syntax", "unexpected token in json", "invalid json", "syntax error in json"]
+
+LEAK_KEYWORDS_STRICT = [
+    "traceback (most recent call last)",
+    "stack trace:",
+    "stacktrace",
+    "fatal error:",
+    "uncaught exception",
+    "system.exception",
+    "java.lang.",
+    "nullpointerexception",
+    "internal server error",
+]
 ANOMALY_STATUS = {500, 502, 503, 504}
 TIMEOUT_HINTS = ["timeout", "timed out", "read timeout"]
 OAST_KEYWORDS = ["interactsh", "oast", "collaborator", "dns interaction", "out-of-band"]
+
+
+def is_sql_error(evidence: str) -> bool:
+    """Kiểm tra chính xác lỗi SQL, loại bỏ báo động giả từ JSON/Client syntax errors."""
+    ev_lower = evidence.lower()
+    # 1. Các từ khóa SQL tường minh
+    if any(k in ev_lower for k in SQL_ERROR_EXPLICIT_KEYWORDS):
+        return True
+    # 2. Cặp từ khóa Database + error/syntax
+    has_db = any(db in ev_lower for db in DB_CONTEXT_KEYWORDS)
+    if has_db and any(err in ev_lower for err in ("syntax", "error", "warning", "fatal", "exception")):
+        return True
+    # 3. Nếu chỉ có 'syntax error' đơn thuần: kiểm tra xem có phải lỗi format JSON/YAML của client không
+    if "syntax error" in ev_lower:
+        if any(hint in ev_lower for hint in CLIENT_SYNTAX_HINTS) and not has_db:
+            return False
+        # Nếu có từ khóa sql syntax hoặc ngữ cảnh database
+        return True
+    return False
+
+
+def is_server_leak(evidence: str, status: int | None = None) -> bool:
+    """Kiểm tra rò rỉ stack trace/lỗi hệ thống, tránh báo động giả với từ 'exception' trong phản hồi 200/400 bình thường."""
+    ev_lower = evidence.lower()
+    if any(k in ev_lower for k in LEAK_KEYWORDS_STRICT):
+        return True
+    # Nếu là lỗi 5xx kèm chữ exception thì coi là leak
+    if status in ANOMALY_STATUS and "exception" in ev_lower:
+        return True
+    return False
 
 
 class Signal(str, Enum):
@@ -84,8 +131,8 @@ def classify_one(f: dict[str, Any], timing_threshold_ms: float = 4000.0) -> Clas
         except (TypeError, ValueError):
             pass
 
-    # 5. Rò rỉ thông báo lỗi cú pháp SQL
-    if any(k in evidence for k in SQL_ERROR_KEYWORDS):
+    # 5. Rò rỉ thông báo lỗi cú pháp SQL (đã loại trừ báo động giả client syntax)
+    if is_sql_error(evidence):
         return Classified(f, Signal.ANOMALY, "rò rỉ lỗi SQL trong response")
 
     # 6. Mã lỗi máy chủ nội bộ HTTP 5xx
@@ -97,7 +144,7 @@ def classify_one(f: dict[str, Any], timing_threshold_ms: float = 4000.0) -> Clas
         return Classified(f, Signal.ANOMALY, "timeout")
 
     # 8. Rò rỉ Stack trace / Internal exception
-    if any(k in evidence for k in LEAK_KEYWORDS):
+    if is_server_leak(evidence, status):
         return Classified(f, Signal.ANOMALY, "rò rỉ lỗi/stack trace")
 
     return Classified(f, Signal.MISS, "không có tín hiệu bất thường")
@@ -130,4 +177,4 @@ def summarize_for_llm(analysis: Analysis, max_examples: int = 5) -> str:
     return "\n".join(lines)
 
 
-__all__ = ["Signal", "Classified", "Analysis", "classify_one", "analyze", "summarize_for_llm"]
+__all__ = ["Signal", "Classified", "Analysis", "classify_one", "analyze", "summarize_for_llm", "is_sql_error", "is_server_leak"]

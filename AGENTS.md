@@ -21,6 +21,7 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
 5. **Engine Thực thi Fuzzing & Tương tác Runtime**:
    - `Schemathesis/` và `Nuclei/`: Tự động nạp payload và thực thi kiểm thử.
    - `core/stateful_chain.py`: Hỗ trợ fuzzing chuỗi trạng thái (Stateful Context Chaining) trích xuất dữ liệu động giữa các bước để kiểm tra BOLA/IDOR.
+   - `core/tampering.py`: Kiểm thử logic không cần payload độc (Mass Assignment / Parameter Tampering & HTTP Verb Tampering/Tunneling).
    - `core/auth_manager.py`: Tự động quản lý và refresh auth token khi gặp mã HTTP 401.
 6. **Module Phân tích Phản hồi (Enhanced Oracle & Feedback Loop)**:
    - `core/oracle.py`: Phán đoán đa tầng (Regex, Time-based Blind SQLi/ReDoS, OAST callbacks, BOLA differential).
@@ -65,4 +66,19 @@ python fuzzer.py scan https://api.corp.local/v3/api-docs -u https://api.corp.loc
 
 # Tự động dò tìm OpenAPI spec (Auto-Discovery) trên bất kỳ IP/URL nào
 python fuzzer.py scan auto -u http://192.168.1.100:8000 --auto-discover --target-name "InternalMicroservice"
+
+# Vòng lặp phản hồi thích ứng đa thế hệ (Adaptive Feedback Loop Fuzzing)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --generations 3
+
+# Kiểm thử chuỗi trạng thái tự động (Stateful Context Chaining BOLA/IDOR)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --token "Bearer userA" --secondary-token "Bearer userB" --stateful
+
+# Kiểm thử Logic không cần payload độc (BOLA + Mass Assignment + Verb Tampering WAF Bypass)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --token "Bearer test-jwt-token" --logic-scan
+
+# Hoặc bật riêng rẽ từng module Parameter Tampering hoặc Verb Tampering
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --mass-assignment --verb-tampering
+
+# Xử lý đặc tả lớn (Chunking / Batching) & So sánh Baseline Drift
+python fuzzer.py scan large_spec.json -u http://localhost:8000 --chunk-size 15 --baseline results/previous_findings.ndjson
 ```

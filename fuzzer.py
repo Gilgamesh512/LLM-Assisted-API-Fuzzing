@@ -25,15 +25,23 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from core.analyzer import analyze_file, parse_raw_endpoints, probe_openapi_spec  # noqa: E402
 from core.auth_manager import TokenManager  # noqa: E402
-from core.baseline import security_gate  # noqa: E402
+from core.baseline import compare_baseline, load_findings, security_gate  # noqa: E402
 from core.html_report import generate_html_report  # noqa: E402
 from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E402
-from core.oracle import Signal, analyze as oracle_analyze  # noqa: E402
+from core.oracle import (  # noqa: E402
+    Signal,
+    analyze as oracle_analyze,
+    is_server_leak,
+    is_sql_error,
+    summarize_for_llm,
+)
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
 from core.providers import get_provider  # noqa: E402
 from core.safety import filter_safe_payloads  # noqa: E402
 from core.sanitizer import mask_spec_data, unmask_object  # noqa: E402
 from core.sarif import export_sarif_file  # noqa: E402
+from core.stateful_chain import execute_stateful_bola_scan  # noqa: E402
+from core.tampering import execute_mass_assignment_scan, execute_verb_tampering_scan  # noqa: E402
 from core.telemetry import RunTelemetry  # noqa: E402
 from core.validator import (  # noqa: E402
     MAX_REPAIR_ATTEMPTS,
@@ -102,6 +110,11 @@ class RateLimiter:
                 time.sleep(sleep_needed)
             self.last_req_time = time.perf_counter()
 
+    def throttle_up(self, extra_delay_ms: float = 500.0) -> None:
+        """Tự động tăng delay khi phát hiện bị rate-limit hoặc WAF (HTTP 429 / WAF block)."""
+        with self._lock:
+            self.delay_sec += max(0.1, extra_delay_ms / 1000.0)
+
 
 def _parse_headers(header_list: list[str] | None) -> dict[str, str]:
     """Chuyển đổi danh sách header dạng 'Key: Value' thành dictionary."""
@@ -137,8 +150,10 @@ def _send_fuzz_request(
     token_mgr: TokenManager | None = None,
     scope_guard: ScopeGuard | None = None,
     rate_limiter: RateLimiter | None = None,
+    abort_event: threading.Event | None = None,
+    max_retries: int = 2,
 ) -> dict[str, Any]:
-    """Gửi một request fuzzing và trả về dict kết quả chuẩn hóa."""
+    """Gửi một request fuzzing và trả về dict kết quả chuẩn hóa (kèm WAF Auto-throttle & Network Retry)."""
     method = item["method"]
     endpoint = item["endpoint"]
     param = item["target_param"]
@@ -148,6 +163,22 @@ def _send_fuzz_request(
     target_app = item.get("target_app", "")
 
     url = f"{base_url}/{endpoint.lstrip('/')}"
+
+    # Kiểm tra tín hiệu hủy bỏ (Abort Event)
+    if abort_event and abort_event.is_set():
+        return {
+            "tool": "fuzzer_engine",
+            "target_app": target_app,
+            "endpoint": endpoint,
+            "method": method,
+            "vuln_type": attack_type,
+            "severity": "info",
+            "http_status": 0,
+            "response_time_ms": 0.0,
+            "confirmed": False,
+            "evidence": "SKIPPED: Đã dừng phiên quét theo tín hiệu người dùng (Aborted).",
+            "reproduction": {"method": method, "url": url},
+        }
 
     # Kiểm tra Scope Guard (Phạm vi cho phép)
     if scope_guard and not scope_guard.is_in_scope(url):
@@ -194,37 +225,79 @@ def _send_fuzz_request(
     start_t = time.perf_counter()
     status_code = 0
     resp_text = ""
-    try:
-        resp = session.request(
-            method,
-            url,
-            params=req_params,
-            data=req_data,
-            headers=req_headers,
-            cookies=req_cookies,
-            timeout=timeout,
-        )
-        status_code = resp.status_code
-        resp_text = resp.text[:1000]
+    attempt = 0
 
-        # Xử lý tự động refresh token nếu bị 401
-        if status_code == 401 and token_mgr and token_mgr.auth_type != "static":
-            if token_mgr.handle_response(resp, session=session):
-                resp = session.request(
-                    method,
-                    url,
-                    params=req_params,
-                    data=req_data,
-                    headers=req_headers,
-                    cookies=req_cookies,
-                    timeout=timeout,
-                )
-                status_code = resp.status_code
-                resp_text = resp.text[:1000]
-    except Exception as exc:
-        status_code = 0
-        resp_text = str(exc)
+    while attempt <= max_retries:
+        if abort_event and abort_event.is_set():
+            break
+        attempt += 1
+
+        try:
+            resp = session.request(
+                method,
+                url,
+                params=req_params,
+                data=req_data,
+                headers=req_headers,
+                cookies=req_cookies,
+                timeout=timeout,
+            )
+            status_code = resp.status_code
+            resp_text = resp.text[:1000]
+
+            # Xử lý tự động refresh token nếu bị 401
+            if status_code == 401 and token_mgr and token_mgr.auth_type != "static":
+                if token_mgr.handle_response(resp, session=session):
+                    resp = session.request(
+                        method,
+                        url,
+                        params=req_params,
+                        data=req_data,
+                        headers=req_headers,
+                        cookies=req_cookies,
+                        timeout=timeout,
+                    )
+                    status_code = resp.status_code
+                    resp_text = resp.text[:1000]
+
+            # Xử lý WAF & Rate Limit Auto-Throttle (HTTP 429 hoặc WAF 403)
+            is_rate_limited = status_code == 429 or (
+                status_code == 403 and any(w in resp_text.lower() for w in ("waf", "cloudflare", "rate limit", "blocked by"))
+            )
+            if is_rate_limited and attempt <= max_retries:
+                if rate_limiter:
+                    rate_limiter.throttle_up(500.0)
+                retry_after = resp.headers.get("Retry-After")
+                backoff = 1.0 * attempt
+                if retry_after:
+                    try:
+                        backoff = min(8.0, float(retry_after))
+                    except ValueError:
+                        pass
+                time.sleep(backoff)
+                continue
+
+            # Thành công hoặc mã lỗi thông thường -> thoát vòng lặp retry
+            break
+
+        except Exception as exc:
+            # Lỗi mạng tạm thời (connection reset / drop) -> retry với backoff
+            if attempt <= max_retries and not (abort_event and abort_event.is_set()):
+                time.sleep(0.5 * attempt)
+                continue
+            status_code = 0
+            resp_text = str(exc)
+            break
+
     latency_ms = round((time.perf_counter() - start_t) * 1000, 2)
+
+    # Đánh giá mức độ nghiêm trọng chính xác (Tránh báo động giả từ JSON client syntax error)
+    if status_code >= 500:
+        calc_sev = "high"
+    elif is_sql_error(resp_text) or is_server_leak(resp_text, status_code):
+        calc_sev = "medium"
+    else:
+        calc_sev = "info"
 
     return {
         "tool": "fuzzer_engine",
@@ -232,7 +305,7 @@ def _send_fuzz_request(
         "endpoint": endpoint,
         "method": method,
         "vuln_type": attack_type,
-        "severity": "high" if status_code >= 500 else "medium" if "syntax" in resp_text.lower() else "info",
+        "severity": calc_sev,
         "http_status": status_code,
         "response_time_ms": latency_ms,
         "confirmed": False,
@@ -272,8 +345,22 @@ def run_full_scan(
     raw_endpoints: str | None = None,
     concurrency: int = 5,
     timeout: float = 8.0,
+    generations: int = 1,
+    stateful: bool = False,
+    secondary_token: str | None = None,
+    chunk_size: int = 0,
+    baseline: str | Path | None = None,
+    abort_event: threading.Event | None = None,
+    mass_assignment: bool = False,
+    verb_tampering: bool = False,
+    logic_scan: bool = False,
 ) -> int:
     """Chạy toàn bộ vòng đời Fuzzing."""
+    if logic_scan:
+        stateful = True
+        mass_assignment = True
+        verb_tampering = True
+
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
     run_id = new_run_id()
@@ -330,6 +417,16 @@ def run_full_scan(
     print(f"[*] Provider     : {provider} (model: {model or 'default'})")
     print(f"[*] Safe Mode    : {'BẬT (Chặn DELETE & endpoint nguy hiểm)' if safe_mode else 'TẮT'}")
     print(f"[*] Data Masking : {'BẬT (Che giấu IP/Domain nội bộ)' if mask_data else 'TẮT'}")
+    if generations > 1:
+        print(f"[*] Feedback Loop: BẬT ({generations} thế hệ adaptive)")
+    if stateful:
+        print(f"[*] Stateful BOLA: BẬT (Kiểm thử chuỗi tạo & truy cập trái phép đối tượng)")
+    if mass_assignment:
+        print(f"[*] Mass Assignment: BẬT (Kiểm thử Broken Object Property Level Authorization - OWASP API3)")
+    if verb_tampering:
+        print(f"[*] Verb Tampering : BẬT (Kiểm thử HTTP Verb Tampering, Auth Bypass & Method Tunneling)")
+    if chunk_size > 0:
+        print(f"[*] Spec Chunking: Cỡ {chunk_size} endpoints / batch")
     if insecure:
         print("[*] SSL Verify   : TẮT (Cho phép self-signed certificates)")
     if proxy:
@@ -374,63 +471,86 @@ def run_full_scan(
     else:
         print("[2/6] Bỏ qua Data Masking.")
 
-    # 3. Sinh Payload qua LLM Provider
-    print(f"[3/6] Gọi LLM Provider '{provider}' sinh attack payloads...")
-    telemetry.start("llm_generation")
-    try:
-        provider_inst = get_provider(provider, model=model)
-        prompt = build_payload_generation_prompt(context_data)
-        gen_res = provider_inst.generate(prompt)
-    except Exception as exc:
-        telemetry.stop("llm_generation")
-        print(f"[ERROR] Không thể kết nối tới LLM Provider '{provider}': {exc}", file=sys.stderr)
-        print("        -> Vui lòng kiểm tra API Key (GEMINI_API_KEY/DEEPSEEK_API_KEY) hoặc URL Local LLM (LOCAL_LLM_URL).", file=sys.stderr)
-        return 1
-    telemetry.add_usage(gen_res.get("usage"), source=provider)
-    telemetry.stop("llm_generation")
-    raw_reply = str(gen_res.get("reply", ""))
+    # 3. Sinh Payload qua LLM Provider (Hỗ trợ Spec Chunking / Batching)
+    provider_inst = get_provider(provider, model=model)
+    effective_chunk = chunk_size if chunk_size > 0 else (15 if len(context_data) > 25 else len(context_data))
+    chunks = [context_data[i : i + effective_chunk] for i in range(0, len(context_data), effective_chunk)]
 
-    # 4. Xác thực & Vòng lặp tự sửa lỗi (Pydantic Guardrails)
-    print("[4/6] Xác thực cấu trúc output & Guardrails...")
-    telemetry.start("validation")
-    val_res = validate_llm_output(raw_reply)
-    telemetry.record_validation(val_res.ok)
-    telemetry.stop("validation")
+    if len(chunks) > 1:
+        print(f"[3/6] Chia nhỏ đặc tả ({len(context_data)} endpoints) thành {len(chunks)} batches (cỡ {effective_chunk}) gửi LLM...")
+    else:
+        print(f"[3/6] Gọi LLM Provider '{provider}' sinh attack payloads...")
 
-    attempt = 1
-    while not val_res.ok and attempt < MAX_REPAIR_ATTEMPTS:
-        attempt += 1
-        telemetry.add_repair()
-        print(f"      [!] Lỗi schema lần {attempt-1}: {val_res.error_message}. Đang yêu cầu sửa lại ({attempt}/{MAX_REPAIR_ATTEMPTS})...")
-        telemetry.start("repair")
-        repair_prompt = build_repair_prompt(raw_reply, val_res.error_message or "", attempt)
+    all_validated_payloads: list[dict[str, Any]] = []
+
+    for c_idx, chunk in enumerate(chunks, start=1):
+        if abort_event and abort_event.is_set():
+            print("      [!] Đã nhận tín hiệu dừng quét (Aborted).")
+            break
+
+        prefix_tag = f"[Batch {c_idx}/{len(chunks)}] " if len(chunks) > 1 else ""
+        print(f"      {prefix_tag}Gọi LLM Provider '{provider}' ({len(chunk)} endpoints)...")
+        telemetry.start("llm_generation")
         try:
-            rep_res = provider_inst.repair(repair_prompt)
+            prompt = build_payload_generation_prompt(chunk)
+            gen_res = provider_inst.generate(prompt)
         except Exception as exc:
-            telemetry.stop("repair")
-            print(f"[ERROR] Lỗi kết nối LLM khi yêu cầu tự sửa: {exc}", file=sys.stderr)
+            telemetry.stop("llm_generation")
+            print(f"[ERROR] Không thể kết nối tới LLM Provider '{provider}': {exc}", file=sys.stderr)
+            print("        -> Vui lòng kiểm tra API Key (GEMINI_API_KEY/DEEPSEEK_API_KEY) hoặc URL Local LLM (LOCAL_LLM_URL).", file=sys.stderr)
             return 1
-        telemetry.add_usage(rep_res.get("usage"), source=provider)
-        raw_reply = str(rep_res.get("reply", ""))
-        telemetry.stop("repair")
+        telemetry.add_usage(gen_res.get("usage"), source=provider)
+        telemetry.stop("llm_generation")
+        raw_reply = str(gen_res.get("reply", ""))
 
+        # 4. Xác thực & Vòng lặp tự sửa lỗi (Pydantic Guardrails)
         telemetry.start("validation")
-        val_res = validate_llm_output(raw_reply, attempt=attempt)
+        val_res = validate_llm_output(raw_reply)
         telemetry.record_validation(val_res.ok)
         telemetry.stop("validation")
 
-    if not val_res.ok:
-        print(f"[ERROR] Sau {MAX_REPAIR_ATTEMPTS} lần thử, LLM không trả JSON hợp lệ: {val_res.error_message}", file=sys.stderr)
+        attempt = 1
+        while not val_res.ok and attempt < MAX_REPAIR_ATTEMPTS:
+            if abort_event and abort_event.is_set():
+                break
+            attempt += 1
+            telemetry.add_repair()
+            print(f"      {prefix_tag}[!] Lỗi schema lần {attempt-1}: {val_res.error_message}. Đang yêu cầu sửa lại ({attempt}/{MAX_REPAIR_ATTEMPTS})...")
+            telemetry.start("repair")
+            repair_prompt = build_repair_prompt(raw_reply, val_res.error_message or "", attempt)
+            try:
+                rep_res = provider_inst.repair(repair_prompt)
+            except Exception as exc:
+                telemetry.stop("repair")
+                print(f"[ERROR] Lỗi kết nối LLM khi yêu cầu tự sửa: {exc}", file=sys.stderr)
+                return 1
+            telemetry.add_usage(rep_res.get("usage"), source=provider)
+            raw_reply = str(rep_res.get("reply", ""))
+            telemetry.stop("repair")
+
+            telemetry.start("validation")
+            val_res = validate_llm_output(raw_reply, attempt=attempt)
+            telemetry.record_validation(val_res.ok)
+            telemetry.stop("validation")
+
+        if val_res.ok and val_res.payloads:
+            batch_payloads = payloads_to_jsonable(val_res.payloads)
+            all_validated_payloads.extend(batch_payloads)
+        else:
+            print(f"      {prefix_tag}[!] Batch này không sinh được payload hợp lệ: {val_res.error_message}")
+
+    if not all_validated_payloads and not (abort_event and abort_event.is_set()):
+        print(f"[ERROR] Sau các lần thử, LLM không trả JSON hợp lệ: {val_res.error_message}", file=sys.stderr)
         return 1
 
-    payloads = payloads_to_jsonable(val_res.payloads or [])
+    payloads = all_validated_payloads
 
     # Khôi phục (Unmask) dữ liệu sau khi LLM sinh
     if mask_data and reverse_map:
         payloads = unmask_object(payloads, reverse_map)
         print(f"      [Data Masking] Đã khôi phục (Unmask) {len(reverse_map)} mục nhạy cảm cho payloads.")
 
-    print(f"      [OK] Đã xác thực thành công {len(payloads)} payloads.")
+    print(f"      [OK] Đã xác thực thành công tổng cộng {len(payloads)} payloads.")
 
     # 5. Chế độ An toàn (Safe Mode)
     if safe_mode:
@@ -449,7 +569,6 @@ def run_full_scan(
     # 6. Bắn Fuzzing thực tế (nếu có target_url và không bật dry_run)
     findings: list[dict[str, Any]] = []
     if target_url and not dry_run:
-        print(f"[5/6] Thực thi Fuzzing vào target: {target_url}...")
         import requests
         base_url = target_url.rstrip("/")
         session = requests.Session()
@@ -481,57 +600,203 @@ def run_full_scan(
         scope_guard = ScopeGuard(base_url, extra_allowed=allowed_hosts)
         rate_limiter = RateLimiter(delay_ms=delay_ms, max_rps=max_rps)
 
-        # Thực thi tuần tự hoặc đa luồng (Concurrent)
-        if concurrency > 1 and len(fuzz_items) > 1:
-            print(f"      [*] Chạy đồng thời ({concurrency} workers)...")
-            with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
-                future_map = {
-                    executor.submit(_send_fuzz_request, session, base_url, item, timeout, token_mgr, scope_guard, rate_limiter): item
-                    for item in fuzz_items
-                }
-                for fut in concurrent.futures.as_completed(future_map):
-                    findings.append(fut.result())
-        else:
-            for item in fuzz_items:
-                res = _send_fuzz_request(
-                    session,
-                    base_url,
-                    item,
-                    timeout=timeout,
-                    token_mgr=token_mgr,
-                    scope_guard=scope_guard,
-                    rate_limiter=rate_limiter,
-                )
-                findings.append(res)
+        gen_budget = max(1, generations)
+        current_fuzz_items = fuzz_items
+        all_executed_findings: list[dict[str, Any]] = []
+        consecutive_no_signal = 0
 
-        print(f"      [OK] Đã hoàn thành bắn {len(findings)} test cases.")
+        for current_gen in range(gen_budget):
+            if abort_event and abort_event.is_set():
+                print("      [!] Đã nhận tín hiệu dừng quét (Aborted).")
+                break
 
-        # Phân tích Oracle & Đồng bộ kết quả vào findings
-        print("[6/6] Phân tích bằng Enhanced Oracle (Regex, Timing, OAST, BOLA)...")
-        analysis = oracle_analyze(findings)
+            gen_label = f"Gen {current_gen + 1}/{gen_budget}"
+            print(f"[5/6] [{gen_label}] Thực thi Fuzzing {len(current_fuzz_items)} payloads vào target: {target_url}...")
 
-        for c in analysis.classified:
-            f = c.finding
-            if c.signal == Signal.SUCCESS:
-                f["confirmed"] = True
-                vuln_upper = str(f.get("vuln_type", "")).upper()
-                if any(k in vuln_upper for k in ("SQL", "BOLA", "AUTH", "SSRF", "COMMAND", "TRAVERSAL")):
-                    f["severity"] = "critical"
-                else:
-                    f["severity"] = "high"
-                f["confidence"] = 95
-                f["evidence"] = f"[ORACLE CONFIRMED: {c.reason}] {f.get('evidence', '')}".strip()
-            elif c.signal == Signal.ANOMALY:
-                if str(f.get("severity", "")).lower() in ("info", "low", ""):
-                    f["severity"] = "medium"
-                f["confidence"] = 80
-                f["evidence"] = f"[ORACLE ANOMALY: {c.reason}] {f.get('evidence', '')}".strip()
+            gen_findings: list[dict[str, Any]] = []
+            if concurrency > 1 and len(current_fuzz_items) > 1:
+                print(f"      [*] Chạy đồng thời ({concurrency} workers)...")
+                with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
+                    future_map = {
+                        executor.submit(
+                            _send_fuzz_request,
+                            session,
+                            base_url,
+                            item,
+                            timeout,
+                            token_mgr,
+                            scope_guard,
+                            rate_limiter,
+                            abort_event,
+                        ): item
+                        for item in current_fuzz_items
+                    }
+                    for fut in concurrent.futures.as_completed(future_map):
+                        if abort_event and abort_event.is_set():
+                            break
+                        gen_findings.append(fut.result())
             else:
-                f["confidence"] = 40
+                for item in current_fuzz_items:
+                    if abort_event and abort_event.is_set():
+                        break
+                    res = _send_fuzz_request(
+                        session,
+                        base_url,
+                        item,
+                        timeout=timeout,
+                        token_mgr=token_mgr,
+                        scope_guard=scope_guard,
+                        rate_limiter=rate_limiter,
+                        abort_event=abort_event,
+                    )
+                    gen_findings.append(res)
 
-        print(f"      - Khai thác thành công (Success) : {len(analysis.successes)}")
-        print(f"      - Bất thường phát hiện (Anomaly)  : {len(analysis.anomalies)}")
-        print(f"      - Không phản hồi lỗi (Miss)       : {len(analysis.misses)}")
+            print(f"      [OK] [{gen_label}] Đã hoàn thành bắn {len(gen_findings)} test cases.")
+
+            # Phân tích Oracle & Đồng bộ kết quả vào findings
+            print(f"[6/6] [{gen_label}] Phân tích bằng Enhanced Oracle (Regex, Timing, OAST, BOLA)...")
+            analysis = oracle_analyze(gen_findings)
+
+            for c in analysis.classified:
+                f = c.finding
+                if c.signal == Signal.SUCCESS:
+                    f["confirmed"] = True
+                    vuln_upper = str(f.get("vuln_type", "")).upper()
+                    if any(k in vuln_upper for k in ("SQL", "BOLA", "AUTH", "SSRF", "COMMAND", "TRAVERSAL")):
+                        f["severity"] = "critical"
+                    else:
+                        f["severity"] = "high"
+                    f["confidence"] = 95
+                    f["evidence"] = f"[ORACLE CONFIRMED: {c.reason}] {f.get('evidence', '')}".strip()
+                elif c.signal == Signal.ANOMALY:
+                    if str(f.get("severity", "")).lower() in ("info", "low", ""):
+                        f["severity"] = "medium"
+                    f["confidence"] = 80
+                    f["evidence"] = f"[ORACLE ANOMALY: {c.reason}] {f.get('evidence', '')}".strip()
+                else:
+                    f["confidence"] = 40
+
+            print(f"      - Khai thác thành công (Success) : {len(analysis.successes)}")
+            print(f"      - Bất thường phát hiện (Anomaly)  : {len(analysis.anomalies)}")
+            print(f"      - Không phản hồi lỗi (Miss)       : {len(analysis.misses)}")
+
+            all_executed_findings.extend(gen_findings)
+
+            # Kiểm tra điều kiện dừng feedback loop sớm
+            if analysis.exploited:
+                print(f"      [!] Đã xác nhận khai thác thành công (CONFIRMED EXPLOIT) ở thế hệ {current_gen + 1}! Dừng sớm feedback loop.")
+                break
+
+            if not analysis.has_signal():
+                consecutive_no_signal += 1
+                if consecutive_no_signal >= 2:
+                    print(f"      [*] Không phát hiện tín hiệu bất thường mới qua {consecutive_no_signal} thế hệ liên tiếp. Dừng feedback loop.")
+                    break
+            else:
+                consecutive_no_signal = 0
+
+            # Nếu còn thế hệ tiếp theo, chuẩn bị feedback prompt
+            if current_gen < gen_budget - 1 and not (abort_event and abort_event.is_set()):
+                print(f"[*] [{gen_label}] Phản hồi kết quả Oracle cho LLM Provider để sinh thế hệ mới...")
+                feedback_text = summarize_for_llm(analysis)
+                feedback_prompt = (
+                    "Bạn là chuyên gia kiểm thử bảo mật API.\n"
+                    "Dưới đây là kết quả kiểm thử thực tế từ Fuzzing Engine và Oracle ở thế hệ trước:\n\n"
+                    f"{feedback_text}\n\n"
+                    "NHIỆM VỤ THẾ HỆ MỚI:\n"
+                    "- Đối với các endpoint đã có tín hiệu bất thường (HTTP 500, response delay > 4s, leak): Hãy sinh các payload khai thác sâu hơn, thay đổi encoding hoặc bypass filter.\n"
+                    "- Đối với các endpoint không trúng (miss): Đổi hướng kỹ thuật hoặc loại tấn công khác.\n"
+                    "- BẮT BUỘC trả về duy nhất một JSON array hợp lệ tuân thủ AttackPayload schema 8 trường."
+                )
+                try:
+                    rep_gen = provider_inst.generate(feedback_prompt)
+                    val_rep = validate_llm_output(str(rep_gen.get("reply", "")))
+                    if val_rep.ok and val_rep.payloads:
+                        next_payloads = payloads_to_jsonable(val_rep.payloads)
+                        if mask_data and reverse_map:
+                            next_payloads = unmask_object(next_payloads, reverse_map)
+                        if safe_mode:
+                            next_payloads, _ = filter_safe_payloads(next_payloads, safe_mode=True)
+                        current_fuzz_items = [convert_attack_payload_to_fuzz(p, target_app=derived_target_app) for p in next_payloads]
+                        print(f"      [OK] Đã sinh thành công {len(current_fuzz_items)} payloads cho thế hệ tiếp theo.")
+                    else:
+                        print(f"      [-] Thế hệ tiếp theo không sinh được JSON hợp lệ, kết thúc feedback loop.")
+                        break
+                except Exception as exc:
+                    print(f"      [-] Lỗi khi gọi LLM sinh thế hệ mới: {exc}")
+                    break
+
+        findings = all_executed_findings
+
+        # Kiểm thử chuỗi trạng thái tự động (Stateful Context Chaining) nếu bật
+        if stateful and not (abort_event and abort_event.is_set()):
+            print("-" * 65)
+            print("[*] BẬT KIỂM THỬ CHUỖI TRẠNG THÁI (STATEFUL CONTEXT CHAINING) CHO BOLA/IDOR...")
+            stateful_findings = execute_stateful_bola_scan(
+                endpoints=endpoints,
+                base_url=base_url,
+                session=session,
+                primary_token=auth_token,
+                secondary_token=secondary_token,
+                auth_header=auth_header,
+                auth_prefix=auth_prefix,
+                timeout=timeout,
+                scope_guard=scope_guard,
+                rate_limiter=rate_limiter,
+                target_name=derived_target_app,
+                abort_event=abort_event,
+            )
+            if stateful_findings:
+                print(f"      [!] PHÁT HIỆN {len(stateful_findings)} LỖ HỔNG BOLA/IDOR QUA STATEFUL CHAINING!")
+                findings.extend(stateful_findings)
+            else:
+                print("      [OK] Hoàn tất kiểm thử Stateful: không phát hiện rò rỉ quyền truy cập giữa các người dùng.")
+
+        # Kiểm thử Mass Assignment (Parameter Tampering) nếu bật
+        if mass_assignment and not (abort_event and abort_event.is_set()):
+            print("-" * 65)
+            print("[*] BẬT KIỂM THỬ MASS ASSIGNMENT (PARAMETER TAMPERING - OWASP API3)...")
+            ma_findings = execute_mass_assignment_scan(
+                endpoints=endpoints,
+                base_url=base_url,
+                session=session,
+                auth_token=auth_token,
+                auth_header=auth_header,
+                auth_prefix=auth_prefix,
+                timeout=timeout,
+                scope_guard=scope_guard,
+                rate_limiter=rate_limiter,
+                target_name=derived_target_app,
+                abort_event=abort_event,
+            )
+            if ma_findings:
+                print(f"      [!] PHÁT HIỆN {len(ma_findings)} LỖ HỔNG MASS ASSIGNMENT!")
+                findings.extend(ma_findings)
+            else:
+                print("      [OK] Hoàn tất kiểm thử Mass Assignment: không phát hiện gán thuộc tính trái phép.")
+
+        # Kiểm thử HTTP Verb / Method Tampering nếu bật
+        if verb_tampering and not (abort_event and abort_event.is_set()):
+            print("-" * 65)
+            print("[*] BẬT KIỂM THỬ HTTP VERB TAMPERING & METHOD OVERRIDE TUNNELING...")
+            vt_findings = execute_verb_tampering_scan(
+                endpoints=endpoints,
+                base_url=base_url,
+                session=session,
+                auth_token=auth_token,
+                auth_header=auth_header,
+                auth_prefix=auth_prefix,
+                timeout=timeout,
+                scope_guard=scope_guard,
+                rate_limiter=rate_limiter,
+                target_name=derived_target_app,
+                abort_event=abort_event,
+            )
+            if vt_findings:
+                print(f"      [!] PHÁT HIỆN {len(vt_findings)} VẤN ĐỀ VERB TAMPERING / METHOD TUNNELING!")
+                findings.extend(vt_findings)
+            else:
+                print("      [OK] Hoàn tất kiểm thử Verb Tampering: các phương thức HTTP đều an toàn.")
     else:
         print("[5/6] Bỏ qua Fuzzing runtime (chế độ Dry Run hoặc chưa cấu hình URL).")
         for p in payloads:
@@ -546,6 +811,22 @@ def run_full_scan(
                 "confirmed": False,
                 "evidence": f"Generated candidate payload: {p['payload_value']}. Rationale: {p['rationale']}",
             })
+
+    # So sánh Baseline nếu có
+    diff = None
+    if baseline:
+        b_path = Path(baseline)
+        if b_path.is_file():
+            try:
+                prev_findings = load_findings(b_path)
+                diff = compare_baseline(prev_findings, findings)
+                print("-" * 65)
+                print(" BÁO CÁO SO SÁNH BASELINE (DRIFT DETECTION):")
+                print(f" [+] Lỗ hổng mới (New)      : {len(diff.new)}")
+                print(f" [+] Đã xử lý (Resolved)   : {len(diff.resolved)}")
+                print(f" [+] Không đổi (Unchanged)  : {len(diff.unchanged)}")
+            except Exception as b_exc:
+                print(f"[!] Không thể nạp hoặc so sánh baseline từ '{baseline}': {b_exc}")
 
     # Xuất báo cáo SARIF, CSV, NDJSON
     sarif_file = out_path / "findings_summary.sarif"
@@ -612,6 +893,7 @@ def run_full_scan(
         gate_status="PASS" if passed else "FAIL",
         fail_on=fail_on,
         output_files=output_files,
+        baseline_diff=diff,
     )
     html_file.write_text(html_content, encoding="utf-8")
     report_file.write_text(html_content, encoding="utf-8")
@@ -662,6 +944,14 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--raw-endpoints", help="Đường dẫn tệp danh sách endpoint thô (.txt) khi không có OpenAPI spec")
     scan_parser.add_argument("--concurrency", "-c", type=int, default=5, help="Số luồng request đồng thời khi Fuzzing (mặc định: 5)")
     scan_parser.add_argument("--timeout", type=float, default=8.0, help="Thời gian chờ tối đa cho mỗi HTTP request tính bằng giây (mặc định: 8.0)")
+    scan_parser.add_argument("--generations", "-g", type=int, default=1, help="Số thế hệ Adaptive Feedback Loop (mặc định: 1)")
+    scan_parser.add_argument("--stateful", action="store_true", help="Bật kiểm thử chuỗi trạng thái tự động (Stateful Context Chaining) cho BOLA/IDOR")
+    scan_parser.add_argument("--secondary-token", help="Token xác thực của người dùng B (Attacker) để kiểm thử BOLA")
+    scan_parser.add_argument("--chunk-size", type=int, default=0, help="Số endpoints tối đa mỗi batch khi gọi LLM cho đặc tả lớn (0 = tự động)")
+    scan_parser.add_argument("--baseline", help="Đường dẫn file báo cáo trước (.ndjson/.json) để so sánh baseline drift")
+    scan_parser.add_argument("--mass-assignment", action="store_true", help="Bật kiểm thử Mass Assignment / Parameter Tampering (OWASP API3)")
+    scan_parser.add_argument("--verb-tampering", action="store_true", help="Bật kiểm thử HTTP Verb Tampering, Auth Bypass & Method Tunneling")
+    scan_parser.add_argument("--logic-scan", action="store_true", help="Bật toàn bộ bộ kiểm thử Logic nghiệp vụ không cần payload độc (Stateful BOLA + Mass Assignment + Verb Tampering)")
 
     # Command: ui / web
     ui_parser = subparsers.add_parser("ui", aliases=["web"], help="Khởi động giao diện Web UI điều khiển trực quan")
@@ -700,6 +990,14 @@ def main(argv: list[str] | None = None) -> int:
             raw_endpoints=args.raw_endpoints,
             concurrency=args.concurrency,
             timeout=args.timeout,
+            generations=args.generations,
+            stateful=args.stateful,
+            secondary_token=args.secondary_token,
+            chunk_size=args.chunk_size,
+            baseline=args.baseline,
+            mass_assignment=args.mass_assignment,
+            verb_tampering=args.verb_tampering,
+            logic_scan=args.logic_scan,
         )
     else:
         parser.print_help()

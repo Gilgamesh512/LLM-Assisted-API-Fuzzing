@@ -9,6 +9,7 @@ Phục vụ phát hiện các lỗ hổng logic nghiệp vụ phức tạp (BOLA
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -179,4 +180,243 @@ def execute_chain(
     return results
 
 
-__all__ = ["StatefulContext", "ChainStep", "StepResult", "execute_chain"]
+def discover_crud_chains(endpoints: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Tự động phát hiện các cặp endpoint CRUD có liên kết trạng thái (Stateful Chains).
+
+    Tìm các cặp: (POST /resource) -> (GET/PUT/DELETE /resource/{id}) để kiểm thử BOLA/IDOR.
+    """
+    chains: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    post_eps = [ep for ep in endpoints if str(ep.get("method", "")).upper() == "POST"]
+    item_eps = [
+        ep for ep in endpoints
+        if str(ep.get("method", "")).upper() in ("GET", "PUT", "DELETE", "PATCH") and "{" in str(ep.get("path", ""))
+    ]
+
+    for c_ep in post_eps:
+        c_path = str(c_ep.get("path", "")).rstrip("/")
+        if not c_path:
+            continue
+        c_parts = [p for p in c_path.split("/") if p]
+
+        for a_ep in item_eps:
+            a_path = str(a_ep.get("path", ""))
+            a_method = str(a_ep.get("method", "")).upper()
+            a_parts = [p for p in a_path.split("/") if p]
+            if not a_parts:
+                continue
+
+            var_name = ""
+            matched = False
+
+            # Kiểu 1: a_path bắt đầu trực tiếp bằng c_path + /{var} (vd: /orders -> /orders/{id})
+            if a_path.startswith(c_path + "/{"):
+                m = re.match(r"^" + re.escape(c_path) + r"/\{([a-zA-Z0-9_]+)\}", a_path)
+                if m:
+                    var_name = m.group(1)
+                    matched = True
+
+            # Kiểu 2: Cùng thư mục cha (vd: /users/v1/register và /users/v1/{username})
+            if not matched and len(c_parts) > 1 and len(a_parts) == len(c_parts):
+                if c_parts[:-1] == a_parts[:-1] and a_parts[-1].startswith("{") and a_parts[-1].endswith("}"):
+                    var_name = a_parts[-1].strip("{}")
+                    matched = True
+
+            if matched and var_name:
+                key = (c_path, a_method, a_path)
+                if key not in seen:
+                    seen.add(key)
+                    chains.append({
+                        "create_endpoint": c_ep,
+                        "access_endpoint": a_ep,
+                        "target_var": var_name,
+                        "create_path": c_path,
+                        "create_method": "POST",
+                        "access_path": a_path,
+                        "access_method": a_method,
+                    })
+
+    return chains
+
+
+def _build_sample_body(c_ep: dict[str, Any], default_var_val: str = "bola_target_user") -> dict[str, Any]:
+    """Tạo request body mẫu dựa trên tham số đặc tả của endpoint tạo mới."""
+    body: dict[str, Any] = {}
+    params = c_ep.get("parameters", []) or []
+    req_body = c_ep.get("request_body", []) or []
+
+    # Gom các thuộc tính
+    all_props = []
+    if isinstance(params, list):
+        for p in params:
+            if isinstance(p, dict) and p.get("in") == "body":
+                all_props.append(p.get("name", ""))
+    if isinstance(req_body, list):
+        for p in req_body:
+            if isinstance(p, dict):
+                all_props.append(p.get("name", ""))
+            elif isinstance(p, str):
+                all_props.append(p)
+
+    if not all_props:
+        return {
+            "username": default_var_val,
+            "email": f"{default_var_val}@example.com",
+            "password": "Password123!@#",
+            "name": "Stateful BOLA Test Item",
+        }
+
+    for prop in all_props:
+        p_lower = str(prop).lower()
+        if "user" in p_lower:
+            body[prop] = default_var_val
+        elif "pass" in p_lower:
+            body[prop] = "Password123!@#"
+        elif "mail" in p_lower:
+            body[prop] = f"{default_var_val}@example.com"
+        elif any(k in p_lower for k in ("id", "code", "num", "amount", "price")):
+            body[prop] = 100
+        else:
+            body[prop] = "test_value"
+
+    return body
+
+
+def execute_stateful_bola_scan(
+    endpoints: list[dict[str, Any]],
+    base_url: str,
+    *,
+    session: Any = None,
+    primary_token: str | None = None,
+    secondary_token: str | None = None,
+    auth_header: str = "Authorization",
+    auth_prefix: str = "Bearer ",
+    timeout: float = 8.0,
+    scope_guard: Any = None,
+    rate_limiter: Any = None,
+    target_name: str = "api_target",
+    abort_event: Any = None,
+    max_chains: int = 5,
+) -> list[dict[str, Any]]:
+    """Tự động phát hiện và thực thi chuỗi tấn công BOLA/IDOR (Stateful Context Chaining)."""
+    chains = discover_crud_chains(endpoints)
+    findings: list[dict[str, Any]] = []
+
+    if not chains:
+        return findings
+
+    user_a_headers: dict[str, str] = {}
+    if primary_token:
+        user_a_headers[auth_header] = f"{auth_prefix}{primary_token}"
+
+    user_b_headers: dict[str, str] = {}
+    if secondary_token:
+        user_b_headers[auth_header] = f"{auth_prefix}{secondary_token}"
+    else:
+        user_b_headers[auth_header] = f"{auth_prefix}attacker-invalid-token"
+
+    test_chains = chains[:max_chains]
+
+    for idx, chain in enumerate(test_chains, start=1):
+        if abort_event and abort_event.is_set():
+            break
+
+        c_path = chain["create_path"]
+        a_path = chain["access_path"]
+        a_method = chain["access_method"]
+        var_name = chain["target_var"]
+
+        default_val = f"bola_user_{idx}_{int(time.time())}"
+        sample_body = _build_sample_body(chain["create_endpoint"], default_var_val=default_val)
+
+        ctx = StatefulContext({var_name: default_val, "id": default_val, "username": default_val})
+
+        step1 = ChainStep(
+            name=f"Bước 1: User A tạo tài nguyên ({c_path})",
+            method="POST",
+            path=c_path,
+            headers=user_a_headers,
+            body=sample_body,
+            extractors={
+                var_name: var_name,
+                "id": "id",
+                "data.id": "id",
+                "uuid": "uuid",
+                "user_id": "user_id",
+                "username": "username",
+            },
+            expected_status=(200, 201, 204),
+        )
+
+        step2 = ChainStep(
+            name=f"Bước 2: User B truy cập tài nguyên của User A ({a_method} {a_path})",
+            method=a_method,
+            path=a_path,
+            headers=user_b_headers,
+            expect_security_failure=True,  # Kỳ vọng phải bị chặn (401/403/404); nếu 200/204 là BOLA!
+        )
+
+        def _requester(method: str, url: str, headers: dict[str, str], body: Any, params: dict[str, Any]) -> tuple[int, Any]:
+            if scope_guard and not scope_guard.is_in_scope(url):
+                return 0, "Out of scope"
+            if rate_limiter:
+                rate_limiter.wait()
+
+            import requests
+            req_session = session or requests.Session()
+            try:
+                resp = req_session.request(
+                    method,
+                    url,
+                    headers=headers,
+                    json=body if isinstance(body, (dict, list)) else None,
+                    params=params,
+                    timeout=timeout,
+                )
+                try:
+                    data = resp.json()
+                except Exception:
+                    data = resp.text
+                return resp.status_code, data
+            except Exception as exc:
+                return 0, str(exc)
+
+        chain_results = execute_chain([step1, step2], base_url, context=ctx, requester=_requester)
+        if len(chain_results) >= 2:
+            r1, r2 = chain_results[0], chain_results[1]
+            if r2.security_flag:
+                findings.append({
+                    "tool": "stateful_fuzzer",
+                    "target_app": target_name,
+                    "endpoint": a_path,
+                    "method": a_method,
+                    "vuln_type": "BOLA",
+                    "severity": "critical",
+                    "http_status": r2.status_code,
+                    "confirmed": True,
+                    "bola_detected": True,
+                    "confidence": 98,
+                    "evidence": (
+                        f"[STATEFUL BOLA CONFIRMED] Tài nguyên tạo bởi User A tại '{c_path}' "
+                        f"(ID: {ctx.get(var_name)}) bị User B truy cập thành công trái phép "
+                        f"tại '{r2.executed_path}' với HTTP {r2.status_code}."
+                    ),
+                    "reproduction": {
+                        "step1": {"method": "POST", "url": r1.executed_path, "status": r1.status_code},
+                        "step2": {"method": a_method, "url": r2.executed_path, "status": r2.status_code},
+                        "extracted_id": ctx.get(var_name),
+                    },
+                })
+
+    return findings
+
+
+__all__ = [
+    "StatefulContext",
+    "ChainStep",
+    "StepResult",
+    "execute_chain",
+    "discover_crud_chains",
+    "execute_stateful_bola_scan",
+]

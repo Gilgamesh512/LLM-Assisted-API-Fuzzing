@@ -12,6 +12,7 @@ venv/
 .env.*
 *.env
 .spec_cache/
+uploads/
 
 # Không bao giờ commit settings có API key thật
 .deepcode/settings.local.json

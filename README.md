@@ -51,8 +51,17 @@ python fuzzer.py scan https://staging-api.corp.com/v3/api-docs \
 # 4. Auto-Discovery on Unknown Target (Automatically probe /openapi.json, /v3/api-docs...)
 python fuzzer.py scan auto -u http://192.168.1.100:8000 --auto-discover --target-name "InternalMicroservice"
 
-# 5. Schema-less / Raw Endpoints Fuzzing (When target has no Swagger/OpenAPI)
-python fuzzer.py scan endpoints.txt -u http://10.0.0.15:8080 --target-name "LegacyOrdersAPI"
+# 6. Adaptive Feedback Loop Fuzzing (Multi-generation self-improving payloads)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider gemini --generations 3
+
+# 7. Stateful BOLA / IDOR Chaining (Automatic CRUD resource creation & unauthorized cross-user access)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --token "Bearer userA" --secondary-token "Bearer userB" --stateful
+
+# 8. Spec Chunking / Batching for Large Enterprise Specifications
+python fuzzer.py scan large_openapi.json -u http://localhost:8000 --chunk-size 15
+
+# 9. Baseline Comparison & Vulnerability Drift Detection
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --baseline results/previous_findings.ndjson
 ```
 
 ### CLI Arguments for `fuzzer.py scan`:
@@ -62,6 +71,11 @@ python fuzzer.py scan endpoints.txt -u http://10.0.0.15:8080 --target-name "Lega
 - `-p, --provider`: LLM provider (`gemini`, `deepseek`, `local`, `ollama`, `vllm`).
 - `-m, --model`: Specific LLM model name.
 - `-o, --out-dir`: Output directory for reports (default: `results`).
+- `-g, --generations`: Number of Adaptive Feedback Loop generations (default: `1`, up to `5`).
+- `--stateful`: Enable automated Stateful Workflow Chaining for BOLA/IDOR testing.
+- `--secondary-token`: Secondary auth token (User B / Attacker) for cross-user BOLA verification.
+- `--chunk-size`: Batch size for chunking large specs (default: `0` = auto-batching).
+- `--baseline`: Path to previous report (`.ndjson` / `.json`) for vulnerability drift comparison.
 - `-t, --token, --auth-token`: Bearer token or credentials header value.
 - `--auth-header`: Header name (default: `Authorization`).
 - `--auth-prefix`: Token prefix (default: `Bearer `).
@@ -1045,3 +1059,29 @@ The canonical provider abstraction remains:
 ```text
 core/providers.py
 ```
+
+---
+
+# 25. Payload-less Logic Fuzzing & Enterprise WAF Resilience
+
+To overcome LLM safety guardrails and bypass enterprise WAF signature inspection (Cloudflare, AWS WAF, Akamai), the system implements three dedicated logic auditing modules that do NOT require weaponized attack payloads:
+
+1. **Stateful Context Chaining (`core/stateful_chain.py`)**:
+   - Detects BOLA/IDOR (OWASP API1) by automatically executing multi-step CRUD flows across different user identities (User A vs User B).
+   - CLI: `--stateful`, `--secondary-token "Bearer userB"`.
+
+2. **Parameter Tampering / Mass Assignment (`core/tampering.py`)**:
+   - Tests Broken Object Property Level Authorization (OWASP API3) on mutate endpoints (`POST`, `PUT`, `PATCH`).
+   - Automatically probes privileged attributes (`role: "admin"`, `is_admin: true`, `balance: 999999`, `permissions: ["*"]`).
+   - Uses Differential Reflection Oracle to confirm unauthorized property assignment in responses.
+   - CLI: `--mass-assignment`.
+
+3. **HTTP Verb Tampering & Tunneling (`core/tampering.py`)**:
+   - Evaluates HTTP Method Override headers (`X-HTTP-Method-Override`, `X-HTTP-Method`, `X-Method-Override`).
+   - Tests unauthenticated requests with alternate verbs (`HEAD`, `OPTIONS`, `PUT`, `PATCH`) to detect Auth Filter bypass.
+   - Probes `TRACE` method for Cross-Site Tracing (XST).
+   - CLI: `--verb-tampering`.
+
+4. **All-in-One Logic Scan**:
+   - CLI: `--logic-scan` (automatically enables Stateful BOLA + Mass Assignment + Verb Tampering).
+

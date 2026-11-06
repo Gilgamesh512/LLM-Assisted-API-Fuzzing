@@ -45,6 +45,7 @@ scan_state: dict[str, Any] = {
     "report_ready": False,
 }
 scan_lock = threading.Lock()
+scan_abort_event = threading.Event()
 
 
 class LogCapture(io.StringIO):
@@ -127,6 +128,15 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
             raw_endpoints=params.get("raw_endpoints"),
             concurrency=params.get("concurrency", 5),
             timeout=params.get("timeout", 8.0),
+            generations=int(params.get("generations", 1)),
+            stateful=bool(params.get("stateful", False)),
+            secondary_token=params.get("secondary_token") or None,
+            chunk_size=int(params.get("chunk_size", 0)),
+            baseline=params.get("baseline") or None,
+            abort_event=scan_abort_event,
+            mass_assignment=bool(params.get("mass_assignment", False)),
+            verb_tampering=bool(params.get("verb_tampering", False)),
+            logic_scan=bool(params.get("logic_scan", False)),
         )
 
         # Đọc kết quả summary nếu có
@@ -154,9 +164,13 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
                 pass
 
         with scan_lock:
-            scan_state["status"] = "completed" if exit_code == 0 else "gate_failed"
+            if scan_abort_event.is_set():
+                scan_state["status"] = "stopped"
+                scan_state["current_step"] = "Đã dừng quét theo tín hiệu người dùng"
+            else:
+                scan_state["status"] = "completed" if exit_code == 0 else "gate_failed"
+                scan_state["current_step"] = "Hoàn tất kiểm thử"
             scan_state["progress"] = 100
-            scan_state["current_step"] = "Hoàn tất kiểm thử"
             scan_state["findings_count"] = findings_count
             scan_state["summary"] = counts
             scan_state["report_ready"] = html_file.is_file()
@@ -325,6 +339,25 @@ INDEX_HTML = """<!DOCTYPE html>
         .btn-primary:hover { background: var(--primary-hover); }
         .btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
 
+        .btn-danger {
+            background: #ef4444;
+            color: #ffffff;
+            border: none;
+            border-radius: 8px;
+            padding: 12px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 8px;
+            box-shadow: 0 2px 4px rgba(239, 68, 68, 0.2);
+            transition: background 0.15s;
+        }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-danger:disabled { background: #cbd5e1; color: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
         /* Status & Live Console */
         .status-strip {
             display: flex;
@@ -348,6 +381,7 @@ INDEX_HTML = """<!DOCTYPE html>
         .status-running { background: #dbeafe; color: #1e40af; }
         .status-completed { background: #dcfce7; color: #166534; }
         .status-error { background: #fee2e2; color: #991b1b; }
+        .status-stopped { background: #fee2e2; color: #991b1b; }
 
         /* Progress Bar */
         .progress-bar-wrap {
@@ -485,6 +519,13 @@ INDEX_HTML = """<!DOCTYPE html>
                         <div class="form-group" id="specSourceGroup" style="display: none;">
                             <label class="form-label" id="specSourceLabel">Đường dẫn Spec / Tập tin</label>
                             <input type="text" id="specSource" class="form-input" placeholder="dataset/vampi_openapi.json">
+                            <div style="display: flex; gap: 8px; align-items: center; margin-top: 6px;">
+                                <input type="file" id="specFileInput" accept=".json,.yaml,.yml,.txt" style="display: none;" onchange="uploadSpecFile(this)">
+                                <button type="button" class="btn-action" onclick="document.getElementById('specFileInput').click()">
+                                    📁 Tải tệp lên (Upload Spec)
+                                </button>
+                                <span id="uploadStatusText" style="font-size: 12px; color: var(--text-muted);"></span>
+                            </div>
                         </div>
 
                         <div class="form-group">
@@ -534,6 +575,32 @@ INDEX_HTML = """<!DOCTYPE html>
                             </div>
                         </div>
 
+                        <!-- Enterprise Features: Generations & Chunk Size -->
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">Adaptive Feedback Loop</label>
+                                <input type="number" id="generations" class="form-input" value="1" min="1" max="5">
+                                <div class="form-hint">Số thế hệ tự tối ưu payload (1 = đơn vòng).</div>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Spec Chunk Size (Batching)</label>
+                                <input type="number" id="chunkSize" class="form-input" value="15" min="0">
+                                <div class="form-hint">Endpoints mỗi batch cho spec lớn (0 = auto).</div>
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Secondary Token (User B / Attacker BOLA)</label>
+                            <input type="text" id="secondaryToken" class="form-input" placeholder="Bearer user-b-token">
+                            <div class="form-hint">Token người dùng thứ hai để kiểm thử BOLA/IDOR chuỗi.</div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Baseline Comparison File (.ndjson)</label>
+                            <input type="text" id="baselineFile" class="form-input" placeholder="results/findings_summary.ndjson">
+                            <div class="form-hint">So sánh độ trôi lỗ hổng so với phiên quét trước.</div>
+                        </div>
+
                         <div class="form-group">
                             <label class="form-label">Upstream Proxy (Burp Suite / ZAP)</label>
                             <input type="text" id="proxyUrl" class="form-input" placeholder="http://127.0.0.1:8080 (bỏ trống nếu không dùng)">
@@ -545,6 +612,18 @@ INDEX_HTML = """<!DOCTYPE html>
                         </div>
 
                         <!-- Safety Toggles -->
+                        <div class="toggle-group">
+                            <span class="toggle-label">Stateful BOLA/IDOR Chaining</span>
+                            <input type="checkbox" id="stateful">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Mass Assignment (Parameter Tampering)</span>
+                            <input type="checkbox" id="massAssignment" checked>
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">HTTP Verb Tampering & Tunneling</span>
+                            <input type="checkbox" id="verbTampering" checked>
+                        </div>
                         <div class="toggle-group">
                             <span class="toggle-label">Safe Mode (Chặn DELETE & Phá hoại)</span>
                             <input type="checkbox" id="safeMode" checked>
@@ -562,10 +641,14 @@ INDEX_HTML = """<!DOCTYPE html>
                             <input type="checkbox" id="dryRun">
                         </div>
 
-                        <div style="margin-top: 20px;">
+                        <div style="margin-top: 20px; display: grid; grid-template-columns: 2fr 1fr; gap: 10px;">
                             <button type="submit" id="btnStart" class="btn-primary">
                                 <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                                Bắt Đầu Quét Fuzzing
+                                Bắt Đầu Quét
+                            </button>
+                            <button type="button" id="btnStop" class="btn-danger" disabled onclick="stopScan()">
+                                <svg style="width:18px;height:18px;" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                Dừng Quét
                             </button>
                         </div>
                     </div>
@@ -680,6 +763,44 @@ INDEX_HTML = """<!DOCTYPE html>
                 });
         }
 
+        function uploadSpecFile(input) {
+            if (!input.files || !input.files[0]) return;
+            var file = input.files[0];
+            var formData = new FormData();
+            formData.append('file', file);
+            var stText = document.getElementById('uploadStatusText');
+            stText.innerText = 'Đang tải lên: ' + file.name + '...';
+
+            fetch('/api/upload-spec', {
+                method: 'POST',
+                body: formData
+            }).then(r => r.json()).then(res => {
+                if (res.ok) {
+                    document.getElementById('specSource').value = res.filepath;
+                    document.getElementById('specMode').value = 'local_file';
+                    handleSpecModeChange();
+                    stText.innerText = '✓ Đã tải: ' + res.filename;
+                    stText.style.color = '#15803d';
+                } else {
+                    stText.innerText = 'Lỗi: ' + res.error;
+                    stText.style.color = '#b91c1c';
+                }
+            }).catch(err => {
+                stText.innerText = 'Lỗi tải tệp: ' + err;
+                stText.style.color = '#b91c1c';
+            });
+        }
+
+        function stopScan() {
+            if (!confirm('Bạn có chắc chắn muốn hủy / dừng khẩn cấp phiên quét hiện tại?')) return;
+            document.getElementById('btnStop').disabled = true;
+            fetch('/api/scan/stop', { method: 'POST' })
+                .then(r => r.json())
+                .then(res => {
+                    document.getElementById('currentStepText').innerText = 'Đã gửi yêu cầu dừng các luồng...';
+                });
+        }
+
         function startScan(e) {
             e.preventDefault();
             var mode = document.getElementById("specMode").value;
@@ -700,7 +821,7 @@ INDEX_HTML = """<!DOCTYPE html>
                 rawEndpoints = specSource || null;
             }
 
-            var headersRaw = document.getElementById("customHeaders").value.split("\\n").map(s => s.trim()).filter(Boolean);
+            var headersRaw = document.getElementById("customHeaders").value.split("\n").map(s => s.trim()).filter(Boolean);
 
             var payload = {
                 spec_path: specPath,
@@ -719,9 +840,17 @@ INDEX_HTML = """<!DOCTYPE html>
                 dry_run: document.getElementById("dryRun").checked,
                 auto_discover: autoDiscover,
                 raw_endpoints: rawEndpoints,
+                generations: parseInt(document.getElementById("generations").value) || 1,
+                chunk_size: parseInt(document.getElementById("chunkSize").value) || 0,
+                secondary_token: document.getElementById("secondaryToken").value.trim() || null,
+                baseline: document.getElementById("baselineFile").value.trim() || null,
+                stateful: document.getElementById("stateful").checked,
+                mass_assignment: document.getElementById("massAssignment").checked,
+                verb_tampering: document.getElementById("verbTampering").checked,
             };
 
             document.getElementById("btnStart").disabled = true;
+            document.getElementById("btnStop").disabled = false;
             document.getElementById("resultsSummarySection").style.display = "none";
             document.getElementById("consoleBox").innerHTML = '<div class="console-line text-muted">[*] Bắt đầu khởi động phiên quét...</div>';
 
@@ -736,6 +865,7 @@ INDEX_HTML = """<!DOCTYPE html>
                 } else {
                     alert("Lỗi: " + res.error);
                     document.getElementById("btnStart").disabled = false;
+                    document.getElementById("btnStop").disabled = true;
                 }
             });
         }
@@ -748,7 +878,8 @@ INDEX_HTML = """<!DOCTYPE html>
                     var pBar = document.getElementById("progressBar");
                     var stepText = document.getElementById("currentStepText");
 
-                    badge.className = "status-pill status-" + (st.status === "gate_failed" ? "error" : st.status);
+                    var badgeCls = "status-" + (st.status === "gate_failed" ? "error" : (st.status === "stopped" ? "stopped" : st.status));
+                    badge.className = "status-pill " + badgeCls;
                     badge.innerText = st.status.toUpperCase();
                     pBar.style.width = st.progress + "%";
                     stepText.innerText = st.current_step;
@@ -764,10 +895,11 @@ INDEX_HTML = """<!DOCTYPE html>
                     }).join("");
                     box.scrollTop = box.scrollHeight;
 
-                    // Nếu hoàn tất
-                    if (st.status === "completed" || st.status === "gate_failed" || st.status === "error") {
+                    // Nếu hoàn tất hoặc dừng
+                    if (st.status === "completed" || st.status === "gate_failed" || st.status === "error" || st.status === "stopped") {
                         clearInterval(pollTimer);
                         document.getElementById("btnStart").disabled = false;
+                        document.getElementById("btnStop").disabled = true;
                         if (st.report_ready || st.status === "completed" || st.status === "gate_failed") {
                             document.getElementById("resultsSummarySection").style.display = "block";
                             document.getElementById("sumTotal").innerText = st.findings_count || 0;
@@ -840,10 +972,11 @@ def get_env_status():
 
 @app.route("/api/scan/start", methods=["POST"])
 def start_scan_endpoint():
-    global scan_state
+    global scan_state, scan_abort_event
     if scan_state["status"] == "running":
         return jsonify({"ok": False, "error": "Một phiên quét khác đang chạy."}), 400
 
+    scan_abort_event.clear()
     data = request.json or {}
     out_dir = data.get("out_dir", "results")
 
@@ -862,6 +995,33 @@ def start_scan_endpoint():
     worker_thread.start()
 
     return jsonify({"ok": True})
+
+
+@app.route("/api/scan/stop", methods=["POST"])
+def stop_scan_endpoint():
+    global scan_abort_event, scan_state
+    scan_abort_event.set()
+    with scan_lock:
+        scan_state["status"] = "stopped"
+        scan_state["current_step"] = "Đã dừng quét theo tín hiệu người dùng"
+        scan_state["logs"].append("[!] ĐÃ GỬI TÍN HIỆU DỪNG KHẨN CẤP: Đã yêu cầu ngắt các luồng Fuzzing.")
+    return jsonify({"ok": True, "message": "Đã gửi tín hiệu dừng khẩn cấp."})
+
+
+@app.route("/api/upload-spec", methods=["POST"])
+def upload_spec_endpoint():
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "Không tìm thấy tệp tải lên."}), 400
+    file = request.files["file"]
+    if not file or not file.filename:
+        return jsonify({"ok": False, "error": "Tên tệp không hợp lệ."}), 400
+
+    upload_dir = REPO_ROOT / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    filename = Path(file.filename).name
+    saved_path = upload_dir / filename
+    file.save(str(saved_path))
+    return jsonify({"ok": True, "filepath": str(saved_path), "filename": filename})
 
 
 @app.route("/api/scan/status")

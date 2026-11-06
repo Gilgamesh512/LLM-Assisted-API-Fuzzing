@@ -33,6 +33,7 @@ def generate_html_report(
     gate_status: str = "PASS",
     fail_on: str = "high",
     output_files: dict[str, str] | None = None,
+    baseline_diff: Any = None,
 ) -> str:
     """Tạo chuỗi HTML hoàn chỉnh chứa báo cáo tổng kết kiểm thử bảo mật."""
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -57,6 +58,18 @@ def generate_html_report(
     gate_passed = "PASS" in gate_status.upper()
     gate_color = "#10b981" if gate_passed else "#ef4444"
     gate_bg = "#ecfdf5" if gate_passed else "#fef2f2"
+
+    baseline_html = ""
+    if baseline_diff is not None:
+        new_cnt = len(getattr(baseline_diff, "new", []))
+        res_cnt = len(getattr(baseline_diff, "resolved", []))
+        unchanged_cnt = len(getattr(baseline_diff, "unchanged", []))
+        baseline_html = (
+            f'<div class="meta-item"><span class="meta-label">Baseline Drift:</span> '
+            f'<strong style="color: #b91c1c;">+{new_cnt} mới</strong> &bull; '
+            f'<strong style="color: #15803d;">-{res_cnt} đã sửa</strong> &bull; '
+            f'<span>{unchanged_cnt} không đổi</span></div>'
+        )
 
     rows_html = []
     for idx, f in enumerate(findings, start=1):
@@ -474,6 +487,7 @@ def generate_html_report(
             <div class="meta-item"><span class="meta-label">LLM Provider:</span> <span class="font-mono">{_escape(provider)} ({_escape(model or 'default')})</span></div>
             <div class="meta-item"><span class="meta-label">Xác nhận Exploit:</span> <strong style="color: #15803d;">{confirmed_count}</strong></div>
             <div class="meta-item"><span class="meta-label">Dấu hiệu Bất thường:</span> <strong style="color: #b45309;">{anomaly_count}</strong></div>
+            {baseline_html}
         </div>
 
         <!-- Summary Statistics -->
