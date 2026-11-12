@@ -1,5 +1,5 @@
 """
-core/sarif.py — Export kết quả kiểm thử ra chuẩn OASIS SARIF v2.1.0.
+core/sarif.py — Export kết quả kiểm thử ra chuẩn OASIS SARIF v2.1.0 với ánh xạ OWASP API & CWE.
 
 Cho phép tích hợp trực tiếp với các nền tảng Enterprise DevSecOps:
 - GitHub Advanced Security (Code Scanning tab)
@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from core.compliance import map_vulnerability_to_compliance
 from core.finding import normalize_findings
 
 
@@ -40,16 +41,22 @@ def convert_findings_to_sarif(
         rule_id = f"API-{vuln_type.upper().replace(' ', '-')}"
         severity = str(item.get("severity") or "info").lower()
         level = _severity_to_sarif_level(severity)
+        compliance = map_vulnerability_to_compliance(vuln_type)
 
         if rule_id not in rules_dict:
             rules_dict[rule_id] = {
                 "id": rule_id,
                 "name": vuln_type,
                 "shortDescription": {"text": f"Potential API Vulnerability: {vuln_type}"},
-                "fullDescription": {"text": str(item.get("recommendation") or f"API security check for {vuln_type}")},
+                "fullDescription": {"text": str(item.get("recommendation") or compliance["description"])},
                 "defaultConfiguration": {"level": level},
                 "help": {
-                    "text": str(item.get("recommendation") or "Review and sanitize input parameters and enforce authorization.")
+                    "text": str(item.get("recommendation") or compliance["remediation"])
+                },
+                "properties": {
+                    "tags": ["security", compliance["owasp_id"], compliance["primary_cwe"]],
+                    "cwe": compliance["cwe_ids"],
+                    "owasp": compliance["owasp_id"],
                 },
             }
 
@@ -58,6 +65,10 @@ def convert_findings_to_sarif(
         evidence = str(item.get("evidence") or "")
         confirmed = bool(item.get("confirmed", False))
         message_text = f"[{method}] {endpoint} - {vuln_type} ({'CONFIRMED' if confirmed else 'POTENTIAL'}). {evidence}".strip()
+
+        curl_cmd = item.get("reproduction_curl")
+        if not curl_cmd and isinstance(item.get("reproduction"), dict):
+            curl_cmd = item["reproduction"].get("curl")
 
         result_entry: dict[str, Any] = {
             "ruleId": rule_id,
@@ -77,6 +88,9 @@ def convert_findings_to_sarif(
                 "confirmed": confirmed,
                 "confidence": item.get("confidence", 50),
                 "reproduction": item.get("reproduction"),
+                "curl_command": curl_cmd,
+                "owasp_category": compliance["owasp_id"],
+                "cwe": compliance["cwe_ids"],
                 "source_engine": item.get("source_engine", "unknown"),
             },
         }
@@ -102,14 +116,10 @@ def convert_findings_to_sarif(
     return sarif_doc
 
 
-def export_sarif_file(findings: list[dict[str, Any]], out_path: str) -> None:
-    """Ghi findings ra file SARIF JSON."""
-    from pathlib import Path
-
-    doc = convert_findings_to_sarif(findings)
-    p = Path(out_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-__all__ = ["convert_findings_to_sarif", "export_sarif_file"]
+def export_sarif_file(findings: list[dict[str, Any]], out_file: str | None = None) -> str:
+    sarif_doc = convert_findings_to_sarif(findings)
+    raw = json.dumps(sarif_doc, ensure_ascii=False, indent=2)
+    if out_file:
+        from pathlib import Path
+        Path(out_file).write_text(raw, encoding="utf-8")
+    return raw

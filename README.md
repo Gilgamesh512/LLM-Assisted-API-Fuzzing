@@ -71,6 +71,12 @@ python fuzzer.py scan traffic_capture.har -u http://localhost:5002 --concurrency
 
 # 12. Deep State Loopback Verification (Active by default; verified via subsequent GET to eliminate false alarms)
 python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --mass-assignment
+
+# 13. 1-Click Developer Reproduction & OWASP Compliance Dashboard (Included automatically in HTML/SARIF reports)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --logic-scan
+
+# 14. Target Data Integrity & DBA Rollback (Injects X-Fuzzer-Audit and generates cleanup_manifest.json)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --stateful
 ```
 
 ### CLI Arguments for `fuzzer.py scan`:
@@ -103,6 +109,32 @@ python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --mass
 - `--no-safe-mode`: Disable safe mode (allows testing `DELETE` and destructive endpoints).
 - `--no-mask-data`: Disable PII & internal IP/domain masking.
 - `--fail-on`: Security gate threshold (`critical`, `high`, `medium`, `low`, `info`).
+
+---
+
+# 🛡️ Enterprise Capabilities (Data Integrity, Triage & Compliance)
+
+### 1. 1-Click Copyable `curl` Reproduction (`core/curl_builder.py`)
+Every confirmed vulnerability and security anomaly discovered by the fuzzer is automatically formatted into an executable, properly escaped `curl` command. 
+- In the **HTML Report**: Developers click the **`📋 Sao chép cURL`** button to instantly copy the exact request (headers, tokens, HTTP method, and JSON body) directly into their terminal.
+- In **OASIS SARIF v2.1.0**: Embedded inside `rule.properties.curl_command` for GitHub Code Scanning and IDE extensions.
+
+### 2. Executive OWASP API Security Top 10 (2023) Compliance & CWE Mapping (`core/compliance.py`)
+Provides security executives (CISO / Tech Leads / Product Managers) with standard security compliance visibility:
+- Automatically classifies all findings into categories: `API1:2023` (BOLA), `API2:2023` (Broken Auth), `API3:2023` (Mass Assignment), `API4:2023` (Rate Limiting), `API7:2023` (SSRF), `API8:2023` (Misconfiguration), `API10:2023` (Unsafe Consumption / Injection).
+- Maps each finding to primary and secondary **CWE IDs** (`CWE-639`, `CWE-915`, `CWE-89`, `CWE-287`, etc.).
+- Calculates an overall **Compliance Score %** with clear status indicators (`PASSED`, `WARNING`, `VIOLATED`) and standardized remediation recommendations.
+
+### 3. Staging Data Integrity: Audit Headers & DBA Cleanup Manifest (`core/safety.py`)
+Testing on staging or pre-production APIs must never pollute databases permanently or trigger false alarms in SIEM/SOC:
+- **Transparent Audit Tracking**: Injects `X-Fuzzer-Audit: true` and `X-Fuzzer-Run-Id: <uuid>` on every outgoing HTTP packet, allowing WAF/SIEM rules to distinguish fuzzing traffic from real external attacks.
+- **Automated Rollback Manifest (`cleanup_manifest.json`)**: Automatically tracks every resource successfully created or mutated (`200`/`201` from `POST`, `PUT`, `PATCH`), records the created IDs, and outputs a JSON manifest with exact `DELETE` or state-restoration hints for DBAs and DevOps teams.
+
+### 4. Domain-Aware Semantic LLM Guidance (`core/prompt_builder.py`)
+Instead of generic fuzzing, the prompt engine analyzes API paths and schemas to infer the specific business vertical:
+- **Fintech & Banking**: Directs LLM to focus on negative balances, transfer tampering, currency bypass, and transaction limits.
+- **E-Commerce & Orders**: Guides testing towards inventory race conditions, negative prices, coupon stacking, and cart manipulation.
+- **Identity & Access Management (IAM)**: Concentrates on privilege escalation, OTP bypass, and token exchange flaws while preserving live token/session formats.
 
 ---
 

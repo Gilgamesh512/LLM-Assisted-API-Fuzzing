@@ -20,6 +20,8 @@ import re
 import time
 from typing import Any, Callable
 
+from core.curl_builder import build_curl_command
+
 _PARAM_REGEX = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
 # Các bộ thuộc tính nhạy cảm dùng để tiêm thử nghiệm Mass Assignment
@@ -334,6 +336,8 @@ def execute_mass_assignment_scan(
                     except Exception:
                         pass
 
+                curl_cmd = build_curl_command(method=method, url=url, headers=headers, json_data=tampered_body)
+
                 # Xử lý phân loại kết quả
                 if loopback_verified:
                     findings.append({
@@ -347,6 +351,7 @@ def execute_mass_assignment_scan(
                         "http_status": status,
                         "confirmed": True,
                         "evidence": loopback_evidence,
+                        "reproduction_curl": curl_cmd,
                         "reproduction": {
                             "method": method,
                             "url": url,
@@ -354,6 +359,7 @@ def execute_mass_assignment_scan(
                             "injected_properties": probe,
                             "verified_getter": getter_ep.get("path") if getter_ep else None,
                             "http_status": status,
+                            "curl": curl_cmd,
                         },
                         "recommendation": (
                             "Áp dụng DTO (Data Transfer Object) nghiêm ngặt hoặc cấu hình allowlist các thuộc tính được phép bind. "
@@ -375,12 +381,14 @@ def execute_mass_assignment_scan(
                         "http_status": status,
                         "confirmed": False,
                         "evidence": loopback_evidence,
+                        "reproduction_curl": curl_cmd,
                         "reproduction": {
                             "method": method,
                             "url": url,
                             "tampered_payload": tampered_body,
                             "injected_properties": probe,
                             "http_status": status,
+                            "curl": curl_cmd,
                         },
                         "recommendation": "Loại bỏ việc nhại lại (echo) các thuộc tính không xác định trong DTO response.",
                     })
@@ -403,12 +411,14 @@ def execute_mass_assignment_scan(
                             f"[CONFIRMED MASS ASSIGNMENT] Endpoint {method} {path} chấp nhận và phản ánh thuộc tính đặc quyền {probe}. "
                             f"{reflect_msg} (HTTP {status})"
                         ),
+                        "reproduction_curl": curl_cmd,
                         "reproduction": {
                             "method": method,
                             "url": url,
                             "tampered_payload": tampered_body,
                             "injected_properties": probe,
                             "http_status": status,
+                            "curl": curl_cmd,
                         },
                         "recommendation": (
                             "Áp dụng DTO (Data Transfer Object) nghiêm ngặt hoặc cấu hình allowlist các thuộc tính được phép bind. "
@@ -464,6 +474,7 @@ def execute_verb_tampering_scan(
             if trace_resp.status_code == 200:
                 resp_text = trace_resp.text or ""
                 if "TRACE" in resp_text or "Host:" in resp_text:
+                    trace_curl = build_curl_command(method="TRACE", url=url)
                     findings.append({
                         "tool": "verb_tampering_fuzzer",
                         "target_app": target_name,
@@ -475,7 +486,8 @@ def execute_verb_tampering_scan(
                         "http_status": 200,
                         "confirmed": True,
                         "evidence": f"Phương thức TRACE được bật trên {path} và phản chiếu lại request headers (HTTP 200). Nguy cơ rò rỉ cookie/credentials.",
-                        "reproduction": {"method": "TRACE", "url": url, "http_status": 200},
+                        "reproduction_curl": trace_curl,
+                        "reproduction": {"method": "TRACE", "url": url, "http_status": 200, "curl": trace_curl},
                         "recommendation": "Tắt hoàn toàn phương thức HTTP TRACE trên web server/reverse proxy.",
                     })
         except Exception:
@@ -501,6 +513,7 @@ def execute_verb_tampering_scan(
 
                 # Nếu phương thức thay thế trả về 200 OK (trong khi endpoint này yêu cầu auth)
                 if alt_resp.status_code == 200 and alt_verb == "HEAD":
+                    head_curl = build_curl_command(method="HEAD", url=url, headers=unauth_headers)
                     findings.append({
                         "tool": "verb_tampering_fuzzer",
                         "target_app": target_name,
@@ -515,7 +528,8 @@ def execute_verb_tampering_scan(
                             f"[VERB TAMPERING] Endpoint {orig_method} {path} yêu cầu xác thực, nhưng gửi HTTP HEAD "
                             f"không có token nhận được HTTP 200 OK. Auth filter có thể đã bị bypass."
                         ),
-                        "reproduction": {"orig_method": orig_method, "tampered_verb": "HEAD", "url": url, "http_status": 200},
+                        "reproduction_curl": head_curl,
+                        "reproduction": {"orig_method": orig_method, "tampered_verb": "HEAD", "url": url, "http_status": 200, "curl": head_curl},
                         "recommendation": "Cấu hình bộ lọc xác thực (Authentication Filter/Middleware) áp dụng đồng nhất cho mọi HTTP method.",
                     })
                     break
@@ -548,6 +562,7 @@ def execute_verb_tampering_scan(
                     continue
 
                 if tunnel_resp.status_code in (200, 204):
+                    tunnel_curl = build_curl_command(method="POST", url=url, headers=tunnel_headers, json_data={})
                     findings.append({
                         "tool": "verb_tampering_fuzzer",
                         "target_app": target_name,
@@ -562,11 +577,13 @@ def execute_verb_tampering_scan(
                             f"Máy chủ chấp nhận ghi đè HTTP Method qua header '{override_header}: DELETE' "
                             f"(HTTP {tunnel_resp.status_code}). WAF kiểm tra method có thể bị vượt qua."
                         ),
+                        "reproduction_curl": tunnel_curl,
                         "reproduction": {
                             "method": "POST",
                             "header_override": f"{override_header}: DELETE",
                             "url": url,
                             "http_status": tunnel_resp.status_code,
+                            "curl": tunnel_curl,
                         },
                         "recommendation": "Tắt hỗ trợ X-HTTP-Method-Override trên reverse proxy hoặc backend nếu không sử dụng clients cũ.",
                     })

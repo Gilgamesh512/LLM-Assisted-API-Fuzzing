@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from core.analyzer import analyze_file, parse_raw_endpoints, probe_openapi_spec  # noqa: E402
 from core.auth_manager import TokenManager  # noqa: E402
 from core.baseline import compare_baseline, load_findings, security_gate  # noqa: E402
+from core.curl_builder import build_curl_command  # noqa: E402
 from core.har_parser import enrich_endpoints_with_har, parse_har_file  # noqa: E402
 from core.html_report import generate_html_report  # noqa: E402
 from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E402
@@ -38,7 +39,7 @@ from core.oracle import (  # noqa: E402
 )
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
 from core.providers import get_provider  # noqa: E402
-from core.safety import filter_safe_payloads  # noqa: E402
+from core.safety import CleanupTracker, filter_safe_payloads, get_audit_headers  # noqa: E402
 from core.sanitizer import mask_spec_data, unmask_object  # noqa: E402
 from core.sarif import export_sarif_file  # noqa: E402
 from core.stateful_chain import execute_stateful_bola_scan  # noqa: E402
@@ -300,6 +301,15 @@ def _send_fuzz_request(
     else:
         calc_sev = "info"
 
+    curl_cmd = build_curl_command(
+        method=method,
+        url=url,
+        headers=req_headers,
+        params=req_params,
+        data=req_data,
+        cookies=req_cookies,
+    )
+
     return {
         "tool": "fuzzer_engine",
         "target_app": target_app,
@@ -311,12 +321,14 @@ def _send_fuzz_request(
         "response_time_ms": latency_ms,
         "confirmed": False,
         "evidence": f"HTTP {status_code}; Latency {latency_ms}ms; Response: {resp_text[:200]}",
+        "reproduction_curl": curl_cmd,
         "reproduction": {
             "method": method,
             "url": url,
             "target_param": param,
             "location": loc,
             "payload_value": val,
+            "curl": curl_cmd,
         },
     }
 
@@ -368,6 +380,7 @@ def run_full_scan(
     out_path.mkdir(parents=True, exist_ok=True)
     run_id = new_run_id()
     telemetry = RunTelemetry()
+    cleanup_tracker = CleanupTracker(run_id)
 
     parsed_custom_headers = _parse_headers(headers)
     spec_target = str(spec_path).strip() if spec_path else ""
@@ -613,6 +626,9 @@ def run_full_scan(
         if parsed_custom_headers:
             session.headers.update(parsed_custom_headers)
 
+        # Gắn Audit Headers cho toàn bộ request (Truy vết SOC & Quản lý An toàn)
+        session.headers.update(get_audit_headers(run_id))
+
         token_mgr = None
         if auth_token:
             token_mgr = TokenManager(
@@ -678,6 +694,19 @@ def run_full_scan(
                     gen_findings.append(res)
 
             print(f"      [OK] [{gen_label}] Đã hoàn thành bắn {len(gen_findings)} test cases.")
+
+            # Ghi nhận các mutation thành công phục vụ Rollback / Cleanup Manifest
+            for gf in gen_findings:
+                st_code = gf.get("http_status")
+                if st_code and 200 <= st_code < 300:
+                    repro = gf.get("reproduction") or {}
+                    cleanup_tracker.record_mutation(
+                        method=gf.get("method", "GET"),
+                        url=repro.get("url", ""),
+                        path=gf.get("endpoint", ""),
+                        status_code=st_code,
+                        payload=repro.get("payload_value"),
+                    )
 
             # Phân tích Oracle & Đồng bộ kết quả vào findings
             print(f"[6/6] [{gen_label}] Phân tích bằng Enhanced Oracle (Regex, Timing, OAST, BOLA)...")
@@ -899,6 +928,10 @@ def run_full_scan(
 
     passed, gate_msg = security_gate(findings, fail_on=fail_on)
 
+    # Xuất file Cleanup Manifest cho DBA / Dev dọn dẹp dữ liệu
+    cleanup_file = out_path / "cleanup_manifest.json"
+    cleanup_tracker.export_cleanup_manifest(cleanup_file)
+
     # Xuất báo cáo HTML tổng kết (Clean, Modern, Light Theme)
     html_file = out_path / "findings_summary.html"
     report_file = out_path / "report.html"
@@ -909,6 +942,7 @@ def run_full_scan(
         "Validated Payloads": str(canonical_file.name),
         "Fuzzing Payloads": str(fuzz_file.name),
         "Run Manifest": "manifest.json",
+        "Cleanup & Rollback Manifest": "cleanup_manifest.json",
     }
     html_content = generate_html_report(
         findings,
@@ -935,6 +969,7 @@ def run_full_scan(
     print(f" [+] Validated Payloads : {canonical_file}")
     print(f" [+] Fuzzing Payloads   : {fuzz_file}")
     print(f" [+] Run Manifest       : {out_path / 'manifest.json'}")
+    print(f" [+] Cleanup Manifest   : {cleanup_file}")
 
     print(f" [+] Security Gate ({fail_on}): {gate_msg}")
     print("=" * 65)

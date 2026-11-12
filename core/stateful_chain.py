@@ -13,6 +13,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from core.curl_builder import build_curl_command
+
 _TEMPLATE_VAR_RE = re.compile(r"\{\{([a-zA-Z0-9_]+)\}\}|\{([a-zA-Z0-9_]+)\}")
 
 
@@ -386,6 +388,11 @@ def execute_stateful_bola_scan(
         if len(chain_results) >= 2:
             r1, r2 = chain_results[0], chain_results[1]
             if r2.security_flag:
+                bola_curl = build_curl_command(
+                    method=a_method,
+                    url=f"{base_url.rstrip('/')}/{r2.executed_path.lstrip('/')}",
+                    headers=user_b_headers,
+                )
                 findings.append({
                     "tool": "stateful_fuzzer",
                     "target_app": target_name,
@@ -402,10 +409,12 @@ def execute_stateful_bola_scan(
                         f"(ID: {ctx.get(var_name)}) bị User B truy cập thành công trái phép "
                         f"tại '{r2.executed_path}' với HTTP {r2.status_code}."
                     ),
+                    "reproduction_curl": bola_curl,
                     "reproduction": {
                         "step1": {"method": "POST", "url": r1.executed_path, "status": r1.status_code},
                         "step2": {"method": a_method, "url": r2.executed_path, "status": r2.status_code},
                         "extracted_id": ctx.get(var_name),
+                        "curl": bola_curl,
                     },
                 })
 

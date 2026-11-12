@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from core.compliance import build_owasp_compliance_matrix, map_vulnerability_to_compliance
+from core.curl_builder import build_curl_command
+
 
 def _escape(val: Any) -> str:
     return html.escape(str(val) if val is not None else "")
@@ -71,17 +74,76 @@ def generate_html_report(
             f'<span>{unchanged_cnt} không đổi</span></div>'
         )
 
+    # Compliance Matrix (OWASP API Top 10 & CWE)
+    compliance_data = build_owasp_compliance_matrix(findings)
+    comp_score = compliance_data["compliance_score"]
+    passed_cats = compliance_data["passed_categories"]
+    violated_cats = compliance_data["violated_categories"]
+    warning_cats = compliance_data["warning_categories"]
+    total_cats = compliance_data["total_categories"]
+
+    if comp_score >= 80:
+        score_bg = "#dcfce7"
+        score_color = "#15803d"
+    elif comp_score >= 50:
+        score_bg = "#fef3c7"
+        score_color = "#b45309"
+    else:
+        score_bg = "#fee2e2"
+        score_color = "#b91c1c"
+
+    comp_rows_html = []
+    for item in compliance_data["matrix"]:
+        c_status = item["status"]
+        if c_status == "PASSED":
+            st_class = "status-passed"
+            st_text = "PASS"
+        elif c_status == "WARNING":
+            st_class = "status-warning"
+            st_text = f"CẢNH BÁO ({item['findings_count']})"
+        else:
+            st_class = "status-violated"
+            st_text = f"VI PHẠM ({item['findings_count']})"
+
+        cwes_str = ", ".join(item["cwe"])
+        comp_rows_html.append(f"""
+        <tr>
+            <td class="font-mono font-semibold text-indigo-700" style="white-space:nowrap;">{_escape(item["id"])}</td>
+            <td><strong>{_escape(item["title"])}</strong><br><span class="text-xs text-slate-500">{_escape(item["remediation"])}</span></td>
+            <td class="font-mono text-xs text-slate-600" style="white-space:nowrap;">{_escape(cwes_str)}</td>
+            <td class="text-center font-mono font-semibold">{item["findings_count"]}</td>
+            <td class="text-center"><span class="status-tag {st_class}">{st_text}</span></td>
+        </tr>
+        """)
+    comp_table_body = "\n".join(comp_rows_html)
+
     rows_html = []
     for idx, f in enumerate(findings, start=1):
         sev = str(f.get("severity", "info")).lower()
         method = str(f.get("method", "GET")).upper()
         endpoint = f.get("endpoint", "/")
-        vuln_type = f.get("vuln_type", "Other")
+        vuln_type = f.get("vuln_type") or f.get("vulnerability") or "Other"
         http_status = f.get("http_status")
         status_disp = str(http_status) if http_status is not None else "N/A"
         confirmed = f.get("confirmed", False)
         evidence = f.get("evidence", "")
         repro = f.get("reproduction", {})
+
+        mapping = map_vulnerability_to_compliance(vuln_type)
+        owasp_id = mapping["owasp_id"]
+        primary_cwe = mapping["primary_cwe"]
+
+        curl_cmd = f.get("curl_command")
+        if not curl_cmd:
+            target_endpoint = endpoint
+            full_url = target_url.rstrip("/") + "/" + target_endpoint.lstrip("/") if target_url else target_endpoint
+            curl_cmd = build_curl_command(
+                method=method,
+                url=full_url,
+                headers=repro.get("headers"),
+                params=repro.get("params"),
+                json_data=repro.get("body") or repro.get("json"),
+            )
 
         # Màu sắc và icon tinh tế theo mức độ
         if sev == "critical":
@@ -146,6 +208,10 @@ def generate_html_report(
             </td>
             <td>
                 <span class="font-medium text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded text-xs">{_escape(vuln_type)}</span>
+                <div style="margin-top: 4px; display: flex; gap: 4px; flex-wrap: wrap;">
+                    <span class="badge" style="background-color: #ede9fe; color: #5b21b6; font-size: 10px; padding: 1px 6px;">{owasp_id}</span>
+                    <span class="badge" style="background-color: #f1f5f9; color: #475569; font-size: 10px; padding: 1px 6px;">{primary_cwe}</span>
+                </div>
             </td>
             <td class="text-center">
                 <span class="font-mono text-xs px-2 py-0.5 rounded bg-slate-100 text-slate-700">{status_disp}</span>
@@ -158,9 +224,26 @@ def generate_html_report(
         <tr id="{row_id}" class="detail-row" style="display: none;">
             <td colspan="8">
                 <div class="detail-box">
+                    <div style="margin-bottom: 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <strong class="text-slate-700 text-xs uppercase tracking-wider">Lệnh cURL Tái hiện (1-Click Reproduce):</strong>
+                            <button class="btn-copy-curl" onclick="copyCurl(this, 'curl_{idx}')" title="Sao chép cURL để dán vào Terminal tái hiện ngay">
+                                📋 Sao chép cURL
+                            </button>
+                        </div>
+                        <pre id="curl_{idx}" class="curl-pre font-mono text-xs">{_escape(curl_cmd)}</pre>
+                    </div>
                     <div class="mb-2">
                         <strong class="text-slate-700 text-xs uppercase tracking-wider">Bằng chứng & Phản hồi Oracle:</strong>
                         <p class="evidence-text font-mono text-xs">{_escape(evidence)}</p>
+                    </div>
+                    <div class="mb-2">
+                        <strong class="text-slate-700 text-xs uppercase tracking-wider">Chuẩn An ninh & Khuyến nghị Khắc phục:</strong>
+                        <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: 6px; padding: 8px 12px; margin-top: 4px; font-size: 12px;">
+                            <span class="font-semibold text-indigo-700">{_escape(mapping['owasp_id'])} - {_escape(mapping['owasp_title'])}</span>
+                            <span class="text-slate-500 font-mono text-xs ml-2">({_escape(', '.join(mapping['cwe_ids']))})</span>
+                            <p class="text-slate-600 mt-1">{_escape(mapping['remediation'])}</p>
+                        </div>
                     </div>
                     {f'''
                     <div>
@@ -463,6 +546,98 @@ def generate_html_report(
 
         .text-center {{ text-align: center; }}
         .font-mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }}
+
+        /* Compliance Section */
+        .compliance-card {{
+            background: #ffffff;
+            border: 1px solid var(--slate-200);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+        }}
+        .compliance-header {{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+        }}
+        .compliance-header h2 {{
+            font-size: 16px;
+            font-weight: 700;
+            color: var(--slate-800);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }}
+        .compliance-pill {{
+            padding: 6px 14px;
+            border-radius: 9999px;
+            font-size: 13px;
+            font-weight: 700;
+        }}
+        .comp-table {{
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }}
+        .comp-table th {{
+            background: var(--slate-50);
+            padding: 10px 12px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--slate-600);
+            border-bottom: 1px solid var(--slate-200);
+        }}
+        .comp-table td {{
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--slate-100);
+            vertical-align: middle;
+        }}
+        .status-tag {{
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 9999px;
+            font-weight: 700;
+            font-size: 10px;
+            letter-spacing: 0.03em;
+        }}
+        .status-passed {{ background: #dcfce7; color: #15803d; border: 1px solid #86efac; }}
+        .status-warning {{ background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }}
+        .status-violated {{ background: #fee2e2; color: #b91c1c; border: 1px solid #fca5a5; }}
+
+        /* Copy cURL button & pre */
+        .btn-copy-curl {{
+            background: var(--primary);
+            color: #ffffff;
+            border: 1px solid var(--primary-hover);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .btn-copy-curl:hover {{
+            background: var(--primary-hover);
+        }}
+        .curl-pre {{
+            background: #0f172a;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            padding: 10px 14px;
+            border-radius: 6px;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.4;
+            user-select: all;
+        }}
     </style>
 </head>
 <body>
@@ -520,6 +695,39 @@ def generate_html_report(
                 <div class="card-label">Low & Info <span style="color: #0284c7;">●</span></div>
                 <div class="card-value" style="color: #0284c7;">{counts["low"] + counts["info"]}</div>
                 <div class="card-sub">Thông tin / Thấp</div>
+            </div>
+        </div>
+
+        <!-- OWASP API Security Top 10 (2023) Compliance Dashboard -->
+        <div class="compliance-card">
+            <div class="compliance-header">
+                <h2>
+                    <svg style="width:20px; height:20px; color:#4f46e5;" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                    </svg>
+                    Ma trận Tuân thủ OWASP API Security Top 10 (2023)
+                </h2>
+                <div>
+                    <span class="compliance-pill" style="background-color: {score_bg}; color: {score_color}; border: 1px solid {score_color}40;">
+                        Chỉ số Tuân thủ: {comp_score}% ({passed_cats}/{total_cats} Danh mục An toàn)
+                    </span>
+                </div>
+            </div>
+            <div style="overflow-x: auto;">
+                <table class="comp-table">
+                    <thead>
+                        <tr>
+                            <th style="width: 100px;">Mã chuẩn</th>
+                            <th>Mô tả Danh mục & Khuyến nghị Khắc phục</th>
+                            <th style="width: 140px;">Mã CWE</th>
+                            <th style="width: 90px;" class="text-center">Số lỗi</th>
+                            <th style="width: 130px;" class="text-center">Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {comp_table_body}
+                    </tbody>
+                </table>
             </div>
         </div>
 
@@ -612,6 +820,50 @@ def generate_html_report(
                     }}
                 }}
             }});
+        }}
+
+        function copyCurl(btn, elementId) {{
+            var pre = document.getElementById(elementId);
+            if (!pre) return;
+            var text = pre.innerText || pre.textContent;
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+                navigator.clipboard.writeText(text).then(function() {{
+                    showCopiedFeedback(btn);
+                }}).catch(function() {{
+                    fallbackCopy(text, btn);
+                }});
+            }} else {{
+                fallbackCopy(text, btn);
+            }}
+        }}
+
+        function fallbackCopy(text, btn) {{
+            var textArea = document.createElement("textarea");
+            textArea.value = text;
+            textArea.style.position = "fixed";
+            textArea.style.opacity = "0";
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            try {{
+                document.execCommand('copy');
+                showCopiedFeedback(btn);
+            }} catch(e) {{
+                alert("Vui lòng sao chép thủ công từ khung cURL: " + e);
+            }}
+            document.body.removeChild(textArea);
+        }}
+
+        function showCopiedFeedback(btn) {{
+            var oldText = btn.innerText;
+            btn.innerText = "✓ Đã sao chép!";
+            btn.style.backgroundColor = "#16a34a";
+            btn.style.borderColor = "#15803d";
+            setTimeout(function() {{
+                btn.innerText = oldText;
+                btn.style.backgroundColor = "";
+                btn.style.borderColor = "";
+            }}, 2000);
         }}
     </script>
 </body>

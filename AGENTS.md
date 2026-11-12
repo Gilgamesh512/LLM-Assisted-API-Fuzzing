@@ -18,10 +18,13 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
    - Pydantic v2 JSON Guardrails xác thực schema `AttackPayload`.
    - Vòng lặp tự sửa lỗi (Self-Repair Loop) phản hồi lỗi trực tiếp cho LLM khi payload sai cú pháp.
    - Cung cấp cầu nối chuyển đổi tương thích với các fuzzing engines downstream (`convert_attack_payload_to_fuzz`).
-4. **Chế độ An toàn & Kiểm soát Phá hủy (`core/safety.py`)**:
+4. **Chế độ An toàn, Toàn vẹn Dữ liệu & Kiểm soát Phá hủy (`core/safety.py`)**:
    - Chế độ Safe Mode chặn các HTTP methods nguy hiểm (`DELETE`, `PURGE`) và các endpoint phá hủy CSDL trên môi trường Staging.
+   - **Doanh nghiệp & Audit Traceability**: Đính kèm header `X-Fuzzer-Audit: true` và `X-Fuzzer-Run-Id: <id>` trên mọi request giúp SOC/SIEM/DevOps phân tách lưu lượng kiểm thử.
+   - **Tự động xuất `cleanup_manifest.json`**: Ghi vết toàn bộ tài nguyên được tạo hoặc biến đổi (POST/PUT/PATCH) kèm lệnh rollback chính xác cho DBA và DevOps hoàn tác sau kiểm thử.
 5. **Engine Thực thi Fuzzing & Tương tác Runtime**:
    - `Schemathesis/` và `Nuclei/`: Tự động nạp payload và thực thi kiểm thử.
+   - `core/curl_builder.py`: Tự động sinh lệnh `curl` hoàn chỉnh (1-Click Reproduce) cho mọi phát hiện, giúp lập trình viên copy-paste tái hiện lỗi ngay lập tức.
    - `core/stateful_chain.py`: Hỗ trợ fuzzing chuỗi trạng thái (Stateful Context Chaining) trích xuất dữ liệu động giữa các bước để kiểm tra BOLA/IDOR.
    - `core/tampering.py`: Kiểm thử logic không cần payload độc (Mass Assignment / Parameter Tampering & HTTP Verb Tampering/Tunneling).
    - **Deep State Loopback Verification**: Sau các request thay đổi trạng thái (POST/PUT/PATCH), tự động thực hiện request `GET` đối ứng để kiểm tra CSDL ngầm thực sự có bị biến đổi hay không, triệt tiêu báo động giả (Echo-only DTO) và phát hiện ghi đè âm thầm (Silent Persistence).
@@ -29,7 +32,9 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
 6. **Module Phân tích Phản hồi (Enhanced Oracle & Feedback Loop)**:
    - `core/oracle.py`: Phán đoán đa tầng (Regex, Time-based Blind SQLi/ReDoS, OAST callbacks, BOLA differential).
    - `core/feedback_loop.py`: Tạo prompt phản hồi cho LLM cải thiện thế hệ payload tiếp theo.
-7. **Module Báo cáo & Security Gate (`core/sarif.py`, `core/baseline.py`)**:
+   - `core/prompt_builder.py`: Nhận diện nghiệp vụ API (Fintech/Banking, E-Commerce, IAM) định hướng LLM tấn công trúng các rủi ro logic đặc thù.
+7. **Module Báo cáo & Security Gate (`core/sarif.py`, `core/baseline.py`, `core/compliance.py`, `core/html_report.py`)**:
+   - **Executive OWASP API Top 10 (2023) Compliance Dashboard**: Đánh giá chỉ số tuân thủ (%) và phân loại CWE chi tiết cho CISO/Tech Lead.
    - Xuất báo cáo chuẩn công nghiệp OASIS SARIF v2.1.0 (tích hợp GitHub Advanced Security, GitLab Security Dashboard, DefectDojo).
    - Thiết lập ngưỡng chặn lỗi (Security Gate) cho pipeline CI/CD.
 
