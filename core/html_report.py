@@ -116,7 +116,11 @@ def generate_html_report(
         m_bg, m_fg = m_colors.get(method, ("#f1f5f9", "#475569"))
 
         # Oracle Confirmation badge
-        if confirmed:
+        if "DEEP STATE LOOPBACK VERIFIED" in str(evidence).upper():
+            conf_html = '<span class="status-pill" style="background:#dcfce7; color:#15803d; border:1px solid #86efac; font-weight:600;">Deep State Verified</span>'
+        elif "ECHO ONLY" in str(evidence).upper():
+            conf_html = '<span class="status-pill" style="background:#f1f5f9; color:#475569; border:1px solid #cbd5e1;">Echo Only (Safe)</span>'
+        elif confirmed:
             conf_html = '<span class="status-pill conf-yes">Đã xác nhận (Exploited)</span>'
         elif "ANOMALY" in str(evidence).upper():
             conf_html = '<span class="status-pill conf-ano">Bất thường (Anomaly)</span>'

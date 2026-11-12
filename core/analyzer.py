@@ -670,8 +670,12 @@ def analyze_file(
     target_str = str(path_or_url).strip()
     if not target_str.startswith(("http://", "https://")):
         p = Path(path_or_url)
-        if p.is_file() and p.suffix.lower() in {".txt", ".endpoints"}:
-            return parse_raw_endpoints(p)
+        if p.is_file():
+            if p.suffix.lower() in {".txt", ".endpoints"}:
+                return parse_raw_endpoints(p)
+            if p.suffix.lower() == ".har":
+                from core.har_parser import har_to_endpoints
+                return har_to_endpoints(p)
 
     spec = load_spec(path_or_url, insecure=insecure, proxy=proxy, headers=headers, timeout=timeout)
     base_dir = Path(path_or_url).parent if not target_str.startswith(("http://", "https://")) else None

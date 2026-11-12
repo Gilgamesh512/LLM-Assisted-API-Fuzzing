@@ -4,7 +4,9 @@ core/tampering.py — Parameter Tampering (Mass Assignment) & HTTP Verb Tamperin
 Module kiểm thử bảo mật chuyên sâu không phụ thuộc vào payload tấn công độc hại:
 1. Mass Assignment (OWASP API3: Broken Object Property Level Authorization):
    - Tự động tiêm các thuộc tính nhạy cảm/đặc quyền (role, is_admin, balance, status, permissions) vào request body (JSON).
-   - Phán đoán Differential Oracle: Xác nhận lỗ hổng khi server trả về 2xx và phản hồi (echo) hoặc ghi nhận thuộc tính trái phép.
+   - Nạp hạt giống thực tế (Live Seed Body) từ lưu lượng HAR để vượt qua 100% hàng rào DTO / Schema validation.
+   - Deep State Loopback Verification: Tự động gửi request GET đối ứng để xác thực CSDL có thực sự bị biến đổi ngầm hay không,
+     triệt tiêu hoàn toàn báo động giả (Echo-only DTO) và bắt trọn các lỗi ghi đè âm thầm (Silent Persistence).
 2. HTTP Verb / Method Tampering & Tunneling (OWASP Testing Guide):
    - Đổi HTTP Method (HEAD, OPTIONS, PUT, PATCH, TRACE) nhằm bypass Auth Middleware hoặc WAF rules.
    - Header-based Method Tunneling (X-HTTP-Method-Override, X-HTTP-Method, X-Method-Override).
@@ -15,6 +17,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from typing import Any, Callable
 
 _PARAM_REGEX = re.compile(r"\{([a-zA-Z0-9_]+)\}")
@@ -60,8 +63,14 @@ METHOD_OVERRIDE_HEADERS = [
 ]
 
 
-def generate_baseline_body(parameters: list[dict[str, Any]] | None) -> dict[str, Any]:
-    """Sinh JSON body mẫu hợp lệ từ danh sách parameters của endpoint."""
+def generate_baseline_body(
+    parameters: list[dict[str, Any]] | None,
+    seed_body: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Sinh JSON body mẫu hợp lệ từ đặc tả parameters hoặc từ hạt giống lưu lượng sống (seed_body)."""
+    if seed_body and isinstance(seed_body, dict):
+        return dict(seed_body)
+
     body: dict[str, Any] = {}
     if not parameters:
         return {"name": "fuzz_test", "email": "fuzz@example.com", "description": "baseline probe"}
@@ -72,13 +81,16 @@ def generate_baseline_body(parameters: list[dict[str, Any]] | None) -> dict[str,
             continue
         p_name = p.get("name", "")
         p_type = str(p.get("type", "string")).lower()
+        sample = p.get("sample_value")
 
         # Xử lý nested name như user.email
         clean_name = p_name.split(".")[-1].replace("[]", "")
         if not clean_name:
             continue
 
-        if "int" in p_type or p_type == "number":
+        if sample is not None:
+            body[clean_name] = sample
+        elif "int" in p_type or p_type == "number":
             body[clean_name] = 1
         elif "bool" in p_type:
             body[clean_name] = False
@@ -97,10 +109,59 @@ def generate_baseline_body(parameters: list[dict[str, Any]] | None) -> dict[str,
     return body
 
 
-def resolve_endpoint_url(base_url: str, path: str) -> str:
-    """Thay thế các placeholder {id}, {user_id} bằng giá trị an toàn mẫu (ví dụ: '1')."""
-    clean_path = _PARAM_REGEX.sub("1", path)
+def resolve_endpoint_url(
+    base_url: str,
+    path: str,
+    sample_params: dict[str, Any] | None = None,
+) -> str:
+    """Thay thế các placeholder {id}, {user_id} bằng giá trị thực tế hoặc giá trị an toàn mẫu (ví dụ: '1')."""
+    clean_path = path
+
+    def _replace_var(match: re.Match[str]) -> str:
+        var_name = match.group(1)
+        if sample_params and var_name in sample_params:
+            return str(sample_params[var_name])
+        return "1"
+
+    clean_path = _PARAM_REGEX.sub(_replace_var, clean_path)
     return f"{base_url.rstrip('/')}/{clean_path.lstrip('/')}"
+
+
+def find_matching_getter(ep: dict[str, Any], endpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Tìm endpoint GET tương ứng để phục vụ kiểm chứng trạng thái ngầm (Deep State Loopback Verification)."""
+    target_path = str(ep.get("path", "")).strip()
+    clean_target = target_path.rstrip("/")
+
+    # Ưu tiên 1: Cùng path chính xác nhưng method là GET (vd: PUT /api/profile -> GET /api/profile)
+    for other in endpoints:
+        if str(other.get("method", "")).upper() == "GET":
+            other_path = str(other.get("path", "")).strip().rstrip("/")
+            if other_path == clean_target:
+                return other
+
+    # Ưu tiên 2: Path của getter là item cụ thể của collection (vd: POST /users -> GET /users/{id} hoặc GET /users/me)
+    for other in endpoints:
+        if str(other.get("method", "")).upper() == "GET":
+            other_path = str(other.get("path", "")).strip().rstrip("/")
+            if other_path.startswith(clean_target + "/"):
+                sub_part = other_path[len(clean_target) + 1 :]
+                # Chỉ match 1 cấp con (vd: {id} hoặc me hoặc profile), không match nhánh xa
+                if "/" not in sub_part and ("{" in sub_part or sub_part in ("me", "profile", "current", "self")):
+                    return other
+
+    # Ưu tiên 3: Target là hành động con, getter là resource cha (vd: PUT /users/1/profile hoặc POST /users/update -> GET /users/1)
+    t_parts = [p for p in clean_target.split("/") if p]
+    if len(t_parts) >= 2:
+        last_segment = t_parts[-1].lower()
+        if last_segment in ("update", "edit", "modify", "profile", "settings", "me"):
+            parent_resource = "/" + "/".join(t_parts[:-1])
+            for other in endpoints:
+                if str(other.get("method", "")).upper() == "GET":
+                    other_path = str(other.get("path", "")).strip().rstrip("/")
+                    if other_path == parent_resource or other_path.startswith(parent_resource + "/{"):
+                        return other
+
+    return None
 
 
 def check_mass_assignment_reflection(probe: dict[str, Any], response_data: Any) -> tuple[bool, str]:
@@ -112,8 +173,6 @@ def check_mass_assignment_reflection(probe: dict[str, Any], response_data: Any) 
         if isinstance(response_data, dict):
             if probe_key in response_data:
                 actual_val = response_data[probe_key]
-                # Chỉ coi là phản hồi thành công nếu giá trị phản hồi khớp với giá trị đặc quyền đã tiêm
-                # Hoặc nếu là cờ boolean, giá trị thực tế phải là True (được kích hoạt)
                 if isinstance(probe_val, bool):
                     if actual_val is True or str(actual_val).lower() in ("true", "1"):
                         return True, f"Thuộc tính nhạy cảm '{probe_key}' được kích hoạt thành {actual_val} trong response."
@@ -151,8 +210,15 @@ def execute_mass_assignment_scan(
     rate_limiter: Any | None = None,
     target_name: str = "API Target",
     abort_event: Any | None = None,
+    deep_verify: bool = True,
+    seed_corpus: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Tự động kiểm thử Mass Assignment (Parameter Tampering) trên các mutate endpoints (POST, PUT, PATCH)."""
+    """Tự động kiểm thử Mass Assignment (Parameter Tampering) trên các mutate endpoints (POST, PUT, PATCH).
+    
+    Hỗ trợ:
+    - Nạp hạt giống thực tế từ Live Seed Body (seed_corpus hoặc ep['seed_body']).
+    - Deep State Loopback Verification: Gửi request GET đối ứng kiểm tra CSDL có thực sự lưu thuộc tính đặc quyền hay không.
+    """
     findings: list[dict[str, Any]] = []
     mutate_methods = {"POST", "PUT", "PATCH"}
 
@@ -171,12 +237,24 @@ def execute_mass_assignment_scan(
 
         path = ep.get("path", "")
         method = ep.get("method", "POST").upper()
-        url = resolve_endpoint_url(base_url, path)
+
+        # Thu thập sample params để resolve path chính xác
+        sample_params: dict[str, Any] = {}
+        for p in ep.get("parameters", []) or []:
+            if isinstance(p, dict) and p.get("sample_value") is not None:
+                sample_params[p.get("name", "")] = p["sample_value"]
+
+        url = resolve_endpoint_url(base_url, path, sample_params)
 
         if scope_guard and not scope_guard.is_in_scope(url):
             continue
 
-        baseline_body = generate_baseline_body(ep.get("parameters"))
+        # Nạp hạt giống sống nếu có từ endpoint hoặc seed_corpus
+        seed_body = ep.get("seed_body")
+        if not seed_body and seed_corpus:
+            seed_body = seed_corpus.get_body_seed(method, path)
+
+        baseline_body = generate_baseline_body(ep.get("parameters"), seed_body=seed_body)
 
         for probe in MASS_ASSIGNMENT_PROBES:
             if abort_event and abort_event.is_set():
@@ -188,6 +266,7 @@ def execute_mass_assignment_scan(
             tampered_body = dict(baseline_body)
             tampered_body.update(probe)
             probe_keys = list(probe.keys())
+            is_critical = any(k in probe for k in ("role", "roles", "is_admin", "isAdmin", "admin", "balance", "permissions"))
 
             try:
                 resp = session.request(
@@ -215,10 +294,48 @@ def execute_mass_assignment_scan(
                 if resp_json:
                     reflected, reflect_msg = check_mass_assignment_reflection(probe, resp_json)
 
-                if reflected:
-                    # Đã xác nhận: Server nhận và phản hồi giá trị nhạy cảm được gán
-                    probe_key_str = ", ".join(probe_keys)
-                    is_critical = any(k in probe for k in ("role", "roles", "is_admin", "isAdmin", "admin", "balance"))
+                # ==============================================================
+                # DEEP STATE LOOPBACK VERIFICATION: Xác minh CSDL thực tế qua GET
+                # ==============================================================
+                getter_ep = find_matching_getter(ep, endpoints) if deep_verify else None
+                loopback_verified = False
+                loopback_evidence = ""
+                echo_only_detected = False
+
+                if getter_ep and 200 <= status < 300:
+                    getter_path = getter_ep.get("path", "")
+                    verify_url = resolve_endpoint_url(base_url, getter_path, sample_params)
+
+                    if rate_limiter:
+                        rate_limiter.wait()
+
+                    try:
+                        verify_resp = session.request("GET", verify_url, headers=headers, timeout=timeout)
+                        if verify_resp.status_code == 200:
+                            v_json = verify_resp.json()
+                            getter_reflected, getter_msg = check_mass_assignment_reflection(probe, v_json)
+
+                            if getter_reflected:
+                                # [XÁC MINH 100% THÀNH CÔNG] Thuộc tính đặc quyền đã thực sự lưu vào CSDL
+                                loopback_verified = True
+                                loopback_evidence = (
+                                    f"[DEEP STATE LOOPBACK VERIFIED] Mutation {method} {path} được server chấp nhận (HTTP {status}) "
+                                    f"và request kiểm tra ngầm GET {getter_path} XÁC NHẬN thuộc tính đặc quyền {probe} đã được lưu trữ vĩnh viễn "
+                                    f"trong cơ sở dữ liệu! ({getter_msg})"
+                                )
+                            elif reflected:
+                                # [TRÁNH BÁO ĐỘNG GIẢ] Server phản hồi thuộc tính trong PUT/POST nhưng GET không có -> Chỉ là echo DTO
+                                echo_only_detected = True
+                                loopback_evidence = (
+                                    f"[ECHO ONLY - NOT PERSISTED] Endpoint {method} {path} phản chiếu thuộc tính {probe} trong response, "
+                                    f"nhưng kiểm tra trạng thái ngầm qua GET {getter_path} xác nhận thuộc tính KHÔNG được lưu vào CSDL. "
+                                    f"Đã triệt tiêu báo động giả thành công."
+                                )
+                    except Exception:
+                        pass
+
+                # Xử lý phân loại kết quả
+                if loopback_verified:
                     findings.append({
                         "tool": "mass_assignment_fuzzer",
                         "target_app": target_name,
@@ -226,7 +343,60 @@ def execute_mass_assignment_scan(
                         "method": method,
                         "vuln_type": "Mass Assignment",
                         "severity": "critical" if is_critical else "high",
-                        "confidence": 95,
+                        "confidence": 100,
+                        "http_status": status,
+                        "confirmed": True,
+                        "evidence": loopback_evidence,
+                        "reproduction": {
+                            "method": method,
+                            "url": url,
+                            "tampered_payload": tampered_body,
+                            "injected_properties": probe,
+                            "verified_getter": getter_ep.get("path") if getter_ep else None,
+                            "http_status": status,
+                        },
+                        "recommendation": (
+                            "Áp dụng DTO (Data Transfer Object) nghiêm ngặt hoặc cấu hình allowlist các thuộc tính được phép bind. "
+                            "Từ chối hoặc loại bỏ các thuộc tính quản trị/đặc quyền từ request của người dùng."
+                        ),
+                    })
+                    break
+
+                elif echo_only_detected:
+                    # Ghi nhận mức Info/Low để lập trình viên biết server có echo thừa, nhưng không kích hoạt chuông báo động giả
+                    findings.append({
+                        "tool": "mass_assignment_fuzzer",
+                        "target_app": target_name,
+                        "endpoint": path,
+                        "method": method,
+                        "vuln_type": "Mass Assignment (Echo-only DTO)",
+                        "severity": "info",
+                        "confidence": 40,
+                        "http_status": status,
+                        "confirmed": False,
+                        "evidence": loopback_evidence,
+                        "reproduction": {
+                            "method": method,
+                            "url": url,
+                            "tampered_payload": tampered_body,
+                            "injected_properties": probe,
+                            "http_status": status,
+                        },
+                        "recommendation": "Loại bỏ việc nhại lại (echo) các thuộc tính không xác định trong DTO response.",
+                    })
+                    continue
+
+                elif reflected:
+                    # Đã phản hồi nhưng không có getter để loopback (hoặc getter lỗi) -> Đánh giá theo phản hồi trực tiếp
+                    probe_key_str = ", ".join(probe_keys)
+                    findings.append({
+                        "tool": "mass_assignment_fuzzer",
+                        "target_app": target_name,
+                        "endpoint": path,
+                        "method": method,
+                        "vuln_type": "Mass Assignment",
+                        "severity": "critical" if is_critical else "high",
+                        "confidence": 90,
                         "http_status": status,
                         "confirmed": True,
                         "evidence": (
@@ -245,12 +415,7 @@ def execute_mass_assignment_scan(
                             "Từ chối hoặc loại bỏ các thuộc tính quản trị/đặc quyền từ request của người dùng."
                         ),
                     })
-                    # Đã xác nhận lỗ hổng nghiêm trọng trên endpoint này, có thể chuyển sang endpoint tiếp theo
                     break
-                elif status in (200, 201) and not ep.get("safe_mode_skip"):
-                    # Tiềm ẩn: Server chấp nhận 200/201 mà không từ chối 400/422 với thuộc tính ngoài đặc tả
-                    # Chỉ ghi nhận nếu chưa có finding confirmed
-                    pass
 
     return findings
 
@@ -280,7 +445,13 @@ def execute_verb_tampering_scan(
         path = ep.get("path", "")
         orig_method = ep.get("method", "GET").upper()
         requires_auth = ep.get("authentication", False) or ep.get("jwt", False)
-        url = resolve_endpoint_url(base_url, path)
+
+        sample_params: dict[str, Any] = {}
+        for p in ep.get("parameters", []) or []:
+            if isinstance(p, dict) and p.get("sample_value") is not None:
+                sample_params[p.get("name", "")] = p["sample_value"]
+
+        url = resolve_endpoint_url(base_url, path, sample_params)
 
         if scope_guard and not scope_guard.is_in_scope(url):
             continue
@@ -376,7 +547,6 @@ def execute_verb_tampering_scan(
                 except Exception:
                     continue
 
-                # Nếu server chấp nhận DELETE qua override header hoặc trả về lỗi cụ thể cho DELETE (ví dụ: method not allowed hoặc 204 deleted)
                 if tunnel_resp.status_code in (200, 204):
                     findings.append({
                         "tool": "verb_tampering_fuzzer",

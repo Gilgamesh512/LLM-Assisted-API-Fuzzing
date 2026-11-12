@@ -208,3 +208,35 @@ def test_fuzzer_scan_unmask_integration(tmp_path: Path):
     assert content[0]["path"] == "/api.production.internal/data"
     assert "real_admin@corp.internal" in content[0]["payload_value"]
 
+
+def test_fuzzer_scan_with_har_traffic(tmp_path: Path):
+    har_fixture = Path(__file__).parent / "fixtures" / "sample_traffic.har"
+    with patch("fuzzer.get_provider", return_value=FakeProvider()):
+        code = fuzzer.run_full_scan(
+            FIXTURE,
+            har_path=har_fixture,
+            provider="gemini",
+            out_dir=tmp_path / "out_har",
+            dry_run=True,
+            deep_verify=True,
+        )
+
+    assert code == 0
+    assert (tmp_path / "out_har" / "manifest.json").is_file()
+    assert (tmp_path / "out_har" / "report.html").is_file()
+
+
+def test_fuzzer_scan_direct_har_spec(tmp_path: Path):
+    har_fixture = Path(__file__).parent / "fixtures" / "sample_traffic.har"
+    with patch("fuzzer.get_provider", return_value=FakeProvider()):
+        code = fuzzer.run_full_scan(
+            har_fixture,
+            provider="gemini",
+            out_dir=tmp_path / "out_direct_har",
+            dry_run=True,
+        )
+
+    assert code == 0
+    assert (tmp_path / "out_direct_har" / "manifest.json").is_file()
+
+

@@ -26,6 +26,7 @@ sys.path.insert(0, str(REPO_ROOT))
 from core.analyzer import analyze_file, parse_raw_endpoints, probe_openapi_spec  # noqa: E402
 from core.auth_manager import TokenManager  # noqa: E402
 from core.baseline import compare_baseline, load_findings, security_gate  # noqa: E402
+from core.har_parser import enrich_endpoints_with_har, parse_har_file  # noqa: E402
 from core.html_report import generate_html_report  # noqa: E402
 from core.manifest import build_manifest, new_run_id, write_manifest  # noqa: E402
 from core.oracle import (  # noqa: E402
@@ -354,6 +355,8 @@ def run_full_scan(
     mass_assignment: bool = False,
     verb_tampering: bool = False,
     logic_scan: bool = False,
+    har_path: str | Path | None = None,
+    deep_verify: bool = True,
 ) -> int:
     """Chạy toàn bộ vòng đời Fuzzing."""
     if logic_scan:
@@ -423,6 +426,10 @@ def run_full_scan(
         print(f"[*] Stateful BOLA: BẬT (Kiểm thử chuỗi tạo & truy cập trái phép đối tượng)")
     if mass_assignment:
         print(f"[*] Mass Assignment: BẬT (Kiểm thử Broken Object Property Level Authorization - OWASP API3)")
+    if deep_verify:
+        print(f"[*] Deep State Verify : BẬT (Xác minh trạng thái ngầm qua GET đối ứng)")
+    if har_path or spec_target.lower().endswith(".har"):
+        print(f"[*] Live Traffic Seed : BẬT ({har_path or spec_target})")
     if verb_tampering:
         print(f"[*] Verb Tampering : BẬT (Kiểm thử HTTP Verb Tampering, Auth Bypass & Method Tunneling)")
     if chunk_size > 0:
@@ -461,6 +468,25 @@ def run_full_scan(
     if not endpoints:
         print("[ERROR] Không tìm thấy endpoint nào từ đặc tả được cung cấp.", file=sys.stderr)
         return 1
+
+    # 1b. Hứng và làm giàu dữ liệu từ lưu lượng thực tế (Live Traffic HAR Ingestion)
+    seed_corpus = None
+    effective_har = har_path or (spec_target if spec_target.lower().endswith(".har") else None)
+    if effective_har:
+        p_har = Path(effective_har)
+        if p_har.is_file():
+            print(f"[*] Hứng lưu lượng thực tế (Live Traffic HAR) từ: {effective_har}...")
+            try:
+                seed_corpus = parse_har_file(p_har)
+                endpoints, enriched_cnt = enrich_endpoints_with_har(endpoints, seed_corpus)
+                print(f"    [+] Đã làm giàu {enriched_cnt} tham số và mẫu body bằng hạt giống sống từ file HAR.")
+                if not auth_token:
+                    sug_tok = seed_corpus.suggest_auth_token()
+                    if sug_tok:
+                        auth_token = sug_tok
+                        print(f"    [+] Tự động phát hiện Auth Token từ file HAR: {auth_token[:15]}...")
+            except Exception as h_exc:
+                print(f"    [-] Lỗi khi nạp hạt giống từ file HAR '{effective_har}': {h_exc}")
 
     # 2. Data Masking (nếu bật)
     context_data = endpoints
@@ -768,6 +794,8 @@ def run_full_scan(
                 rate_limiter=rate_limiter,
                 target_name=derived_target_app,
                 abort_event=abort_event,
+                deep_verify=deep_verify,
+                seed_corpus=seed_corpus,
             )
             if ma_findings:
                 print(f"      [!] PHÁT HIỆN {len(ma_findings)} LỖ HỔNG MASS ASSIGNMENT!")
@@ -952,6 +980,8 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--mass-assignment", action="store_true", help="Bật kiểm thử Mass Assignment / Parameter Tampering (OWASP API3)")
     scan_parser.add_argument("--verb-tampering", action="store_true", help="Bật kiểm thử HTTP Verb Tampering, Auth Bypass & Method Tunneling")
     scan_parser.add_argument("--logic-scan", action="store_true", help="Bật toàn bộ bộ kiểm thử Logic nghiệp vụ không cần payload độc (Stateful BOLA + Mass Assignment + Verb Tampering)")
+    scan_parser.add_argument("--har", help="Đường dẫn file .har (HTTP Archive) để nạp hạt giống dữ liệu sống (Live Seed Corpus)")
+    scan_parser.add_argument("--no-deep-verify", action="store_true", help="Tắt cơ chế Deep State Loopback Verification qua GET đối ứng")
 
     # Command: ui / web
     ui_parser = subparsers.add_parser("ui", aliases=["web"], help="Khởi động giao diện Web UI điều khiển trực quan")
@@ -998,6 +1028,8 @@ def main(argv: list[str] | None = None) -> int:
             mass_assignment=args.mass_assignment,
             verb_tampering=args.verb_tampering,
             logic_scan=args.logic_scan,
+            har_path=args.har,
+            deep_verify=not args.no_deep_verify,
         )
     else:
         parser.print_help()

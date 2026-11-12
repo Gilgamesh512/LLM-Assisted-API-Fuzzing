@@ -6,9 +6,11 @@ Dự án độc lập: **Hệ thống tự động phân tích đặc tả API, 
 
 Toàn bộ hệ thống hoạt động như một thể thống nhất thông qua điểm nhập duy nhất `fuzzer.py` hoặc các module độc lập:
 
-1. **Module Phân tích Đặc tả (`core/analyzer.py`)**:
+1. **Module Phân tích Đặc tả & Hứng Lưu lượng (`core/analyzer.py`, `core/har_parser.py`)**:
    - Parse OpenAPI/Swagger (JSON/YAML), hỗ trợ resolve `$ref` cục bộ & file tương đối.
    - Làm phẳng cấu trúc JSON Body lồng sâu (nested objects & array of objects) và `allOf/anyOf/oneOf`.
+   - **Traffic-Driven HAR Ingestion (`core/har_parser.py`)**: Nạp file `.har` từ Chrome DevTools/Burp Suite, xây dựng kho hạt giống sống (`SeedCorpus`) gồm ID thật, CCCD, Token, Header `X-*`, DTO request body hợp lệ để vượt qua hàng rào validation của server.
+   - Hỗ trợ chạy trực tiếp từ file `.har` mà không cần OpenAPI spec (`fuzzer.py scan session.har`).
 2. **Module Trừu tượng hóa LLM Provider (`core/providers.py`)**:
    - Hỗ trợ đa dạng provider: Google Gemini, DeepSeek, và Local/On-premise LLM (Ollama, vLLM) tương thích chuẩn OpenAI Chat Completions.
    - Không bị vendor lock-in; hỗ trợ cờ Data Masking (`core/sanitizer.py`) bảo vệ quyền riêng tư dữ liệu.
@@ -22,6 +24,7 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
    - `Schemathesis/` và `Nuclei/`: Tự động nạp payload và thực thi kiểm thử.
    - `core/stateful_chain.py`: Hỗ trợ fuzzing chuỗi trạng thái (Stateful Context Chaining) trích xuất dữ liệu động giữa các bước để kiểm tra BOLA/IDOR.
    - `core/tampering.py`: Kiểm thử logic không cần payload độc (Mass Assignment / Parameter Tampering & HTTP Verb Tampering/Tunneling).
+   - **Deep State Loopback Verification**: Sau các request thay đổi trạng thái (POST/PUT/PATCH), tự động thực hiện request `GET` đối ứng để kiểm tra CSDL ngầm thực sự có bị biến đổi hay không, triệt tiêu báo động giả (Echo-only DTO) và phát hiện ghi đè âm thầm (Silent Persistence).
    - `core/auth_manager.py`: Tự động quản lý và refresh auth token khi gặp mã HTTP 401.
 6. **Module Phân tích Phản hồi (Enhanced Oracle & Feedback Loop)**:
    - `core/oracle.py`: Phán đoán đa tầng (Regex, Time-based Blind SQLi/ReDoS, OAST callbacks, BOLA differential).
@@ -78,6 +81,12 @@ python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --toke
 
 # Hoặc bật riêng rẽ từng module Parameter Tampering hoặc Verb Tampering
 python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --mass-assignment --verb-tampering
+
+# Nạp lưu lượng thực tế (Live Traffic HAR Ingestion) làm hạt giống vượt DTO validation
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --har session.har --logic-scan
+
+# Quét trực tiếp từ file HAR mà không cần file OpenAPI spec
+python fuzzer.py scan session.har -u http://localhost:5002 --concurrency 10
 
 # Xử lý đặc tả lớn (Chunking / Batching) & So sánh Baseline Drift
 python fuzzer.py scan large_spec.json -u http://localhost:8000 --chunk-size 15 --baseline results/previous_findings.ndjson

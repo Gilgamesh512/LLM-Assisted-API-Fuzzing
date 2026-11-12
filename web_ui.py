@@ -137,6 +137,8 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
             mass_assignment=bool(params.get("mass_assignment", False)),
             verb_tampering=bool(params.get("verb_tampering", False)),
             logic_scan=bool(params.get("logic_scan", False)),
+            har_path=params.get("har_path") or None,
+            deep_verify=bool(params.get("deep_verify", True)),
         )
 
         # Đọc kết quả summary nếu có
@@ -520,12 +522,18 @@ INDEX_HTML = """<!DOCTYPE html>
                             <label class="form-label" id="specSourceLabel">Đường dẫn Spec / Tập tin</label>
                             <input type="text" id="specSource" class="form-input" placeholder="dataset/vampi_openapi.json">
                             <div style="display: flex; gap: 8px; align-items: center; margin-top: 6px;">
-                                <input type="file" id="specFileInput" accept=".json,.yaml,.yml,.txt" style="display: none;" onchange="uploadSpecFile(this)">
+                                <input type="file" id="specFileInput" accept=".json,.yaml,.yml,.txt,.har" style="display: none;" onchange="uploadSpecFile(this)">
                                 <button type="button" class="btn-action" onclick="document.getElementById('specFileInput').click()">
-                                    📁 Tải tệp lên (Upload Spec)
+                                    📁 Tải tệp lên (Upload Spec/HAR)
                                 </button>
                                 <span id="uploadStatusText" style="font-size: 12px; color: var(--text-muted);"></span>
                             </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label class="form-label">Tập tin Lưu lượng Thực tế (.har Traffic Harvest - Tùy chọn)</label>
+                            <input type="text" id="harPath" class="form-input" placeholder="uploads/traffic.har (xuất từ Chrome DevTools / Burp Suite)">
+                            <div class="form-hint">Nạp hạt giống sống (Live Seeds: ID, CCCD, Token) để vượt qua lớp DTO validation.</div>
                         </div>
 
                         <div class="form-group">
@@ -619,6 +627,10 @@ INDEX_HTML = """<!DOCTYPE html>
                         <div class="toggle-group">
                             <span class="toggle-label">Mass Assignment (Parameter Tampering)</span>
                             <input type="checkbox" id="massAssignment" checked>
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Deep State Loopback Verification (Xác minh qua GET đối ứng)</span>
+                            <input type="checkbox" id="deepVerify" checked>
                         </div>
                         <div class="toggle-group">
                             <span class="toggle-label">HTTP Verb Tampering & Tunneling</span>
@@ -846,7 +858,9 @@ INDEX_HTML = """<!DOCTYPE html>
                 baseline: document.getElementById("baselineFile").value.trim() || null,
                 stateful: document.getElementById("stateful").checked,
                 mass_assignment: document.getElementById("massAssignment").checked,
+                deep_verify: document.getElementById("deepVerify") ? document.getElementById("deepVerify").checked : true,
                 verb_tampering: document.getElementById("verbTampering").checked,
+                har_path: document.getElementById("harPath") ? (document.getElementById("harPath").value.trim() || null) : null,
             };
 
             document.getElementById("btnStart").disabled = true;

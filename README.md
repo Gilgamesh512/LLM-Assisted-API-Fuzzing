@@ -62,21 +62,32 @@ python fuzzer.py scan large_openapi.json -u http://localhost:8000 --chunk-size 1
 
 # 9. Baseline Comparison & Vulnerability Drift Detection
 python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --baseline results/previous_findings.ndjson
+
+# 10. Traffic-Driven Live Seed Seeding (HAR Ingestion to bypass DTO / Schema validation)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --har session.har --logic-scan
+
+# 11. Scan Directly from Captured HAR File (Zero OpenAPI Spec Required)
+python fuzzer.py scan traffic_capture.har -u http://localhost:5002 --concurrency 10
+
+# 12. Deep State Loopback Verification (Active by default; verified via subsequent GET to eliminate false alarms)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --mass-assignment
 ```
 
 ### CLI Arguments for `fuzzer.py scan`:
-- `spec`: Path to OpenAPI/Swagger spec (JSON/YAML), remote URL (`https://...`), raw endpoints list (`.txt`), or `'auto'`.
+- `spec`: Path to OpenAPI/Swagger spec (JSON/YAML), captured `.har` file, raw endpoints list (`.txt`), remote URL (`https://...`), or `'auto'`.
 - `-u, --target-url`: Target server IP or URL for live fuzzing.
 - `--target-name, --app`: Custom target application name for SARIF / CSV reporting.
 - `-p, --provider`: LLM provider (`gemini`, `deepseek`, `local`, `ollama`, `vllm`).
 - `-m, --model`: Specific LLM model name.
 - `-o, --out-dir`: Output directory for reports (default: `results`).
+- `--har`: Path to `.har` (HTTP Archive) traffic file from Chrome DevTools / Burp Suite to harvest live seeds (IDs, DTO payloads, tokens).
+- `--no-deep-verify`: Disable Deep State Loopback Verification (which queries subsequent GET to verify actual DB state persistence).
 - `-g, --generations`: Number of Adaptive Feedback Loop generations (default: `1`, up to `5`).
 - `--stateful`: Enable automated Stateful Workflow Chaining for BOLA/IDOR testing.
 - `--secondary-token`: Secondary auth token (User B / Attacker) for cross-user BOLA verification.
 - `--chunk-size`: Batch size for chunking large specs (default: `0` = auto-batching).
 - `--baseline`: Path to previous report (`.ndjson` / `.json`) for vulnerability drift comparison.
-- `-t, --token, --auth-token`: Bearer token or credentials header value.
+- `-t, --token, --auth-token`: Bearer token or credentials header value (auto-detected if `--har` is provided).
 - `--auth-header`: Header name (default: `Authorization`).
 - `--auth-prefix`: Token prefix (default: `Bearer `).
 - `-H, --header`: Additional custom HTTP headers (e.g. `-H "X-API-Key: 123" -H "X-Tenant: corp"`).
