@@ -30,6 +30,15 @@ _SECRET_VALUE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Regex nhận diện CCCD/CMND Việt Nam (12 số, bắt đầu bằng 0)
+_CCCD_RE = re.compile(r"\b0\d{11}\b")
+
+# Regex nhận diện số điện thoại di động Việt Nam
+_PHONE_VN_RE = re.compile(r"\b(?:\+84|0)(?:3|5|7|8|9)\d{8}\b")
+
+# Regex nhận diện số thẻ tín dụng (Visa, MasterCard, Amex)
+_CREDIT_CARD_RE = re.compile(r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b")
+
 
 class DataMasker:
     """Mã hoá một chiều/hai chiều các giá trị nhạy cảm trước khi đưa vào LLM."""
@@ -41,6 +50,9 @@ class DataMasker:
         self._ip_counter = 0
         self._host_counter = 0
         self._token_counter = 0
+        self._cccd_counter = 0
+        self._phone_counter = 0
+        self._card_counter = 0
 
     def mask_string(self, text: str) -> str:
         if not text or not isinstance(text, str):
@@ -82,7 +94,37 @@ class DataMasker:
                 self.reverse_mapping[masked] = val
             return self.mapping[val]
 
+        def _sub_cccd(match: re.Match[str]) -> str:
+            val = match.group(0)
+            if val not in self.mapping:
+                self._cccd_counter += 1
+                masked = f"09900000{self._cccd_counter:04d}"
+                self.mapping[val] = masked
+                self.reverse_mapping[masked] = val
+            return self.mapping[val]
+
+        def _sub_phone(match: re.Match[str]) -> str:
+            val = match.group(0)
+            if val not in self.mapping:
+                self._phone_counter += 1
+                masked = f"090000{self._phone_counter:04d}"
+                self.mapping[val] = masked
+                self.reverse_mapping[masked] = val
+            return self.mapping[val]
+
+        def _sub_card(match: re.Match[str]) -> str:
+            val = match.group(0)
+            if val not in self.mapping:
+                self._card_counter += 1
+                masked = f"400000000000{self._card_counter:04d}"
+                self.mapping[val] = masked
+                self.reverse_mapping[masked] = val
+            return self.mapping[val]
+
         text = _SECRET_VALUE_RE.sub(_sub_secret, text)
+        text = _CREDIT_CARD_RE.sub(_sub_card, text)
+        text = _CCCD_RE.sub(_sub_cccd, text)
+        text = _PHONE_VN_RE.sub(_sub_phone, text)
         text = _INTERNAL_IP_RE.sub(_sub_ip, text)
         text = _INTERNAL_HOST_RE.sub(_sub_host, text)
         text = _EMAIL_RE.sub(_sub_email, text)
@@ -137,4 +179,20 @@ def unmask_object(obj: Any, reverse_mapping: dict[str, str]) -> Any:
     return obj
 
 
-__all__ = ["DataMasker", "mask_spec_data", "unmask_text", "unmask_object"]
+def mask_secrets_in_text(text: str) -> str:
+    """Che giấu thông tin nhạy cảm cho logs và terminal output (one-way redaction)."""
+    if not text or not isinstance(text, str):
+        return text
+    redacted = _SECRET_VALUE_RE.sub("Bearer [REDACTED_SECRET]", text)
+    redacted = _CREDIT_CARD_RE.sub("[REDACTED_CARD]", redacted)
+    redacted = _CCCD_RE.sub("[REDACTED_CCCD]", redacted)
+    return redacted
+
+
+__all__ = [
+    "DataMasker",
+    "mask_spec_data",
+    "unmask_text",
+    "unmask_object",
+    "mask_secrets_in_text",
+]

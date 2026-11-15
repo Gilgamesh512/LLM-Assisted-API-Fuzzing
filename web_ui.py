@@ -937,6 +937,49 @@ INDEX_HTML = """<!DOCTYPE html>
 """
 
 
+_SERVER_START_TIME = time.time()
+
+
+@app.route("/healthz")
+def healthz():
+    """Liveness probe chuẩn Cloud-Native cho Docker / Kubernetes."""
+    return jsonify({
+        "status": "healthy",
+        "service": "llm-assisted-api-fuzzer-ui",
+        "uptime_seconds": round(time.time() - _SERVER_START_TIME, 2),
+        "timestamp": time.time(),
+    }), 200
+
+
+@app.route("/readyz")
+def readyz():
+    """Readiness probe chuẩn Cloud-Native cho Docker / Kubernetes."""
+    with scan_lock:
+        is_running = scan_state.get("status") == "running"
+    return jsonify({
+        "status": "ready" if not is_running else "busy",
+        "ready": not is_running,
+        "active_status": scan_state.get("status", "idle"),
+        "progress": scan_state.get("progress", 0),
+    }), 200
+
+
+@app.before_request
+def check_ui_auth():
+    """Bảo vệ Web UI bằng xác thực nếu cấu hình biến môi trường FUZZER_UI_PASSWORD."""
+    ui_password = os.environ.get("FUZZER_UI_PASSWORD")
+    if not ui_password:
+        return None
+    # Cho phép health probes mà không cần auth
+    if request.path in ("/healthz", "/readyz"):
+        return None
+    auth_header = request.headers.get("Authorization", "")
+    key_param = request.args.get("key", "")
+    if f"Bearer {ui_password}" in auth_header or key_param == ui_password:
+        return None
+    return jsonify({"error": "Unauthorized. Cần xác thực qua Bearer header hoặc ?key=<password>."}), 401
+
+
 @app.route("/")
 def index():
     return render_template_string(INDEX_HTML)

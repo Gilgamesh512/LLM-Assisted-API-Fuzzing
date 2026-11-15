@@ -30,6 +30,10 @@ RUN pip install --no-cache-dir -r requirements.txt -r Schemathesis-requirements.
 # Sao chép mã nguồn ứng dụng
 COPY . .
 
+# Kiểm tra sức khỏe tự động (Health Check cho Docker / Kubernetes)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:5000/healthz || exit 0
+
 # Điểm nhập mặc định là CLI duy nhất
 ENTRYPOINT ["python", "fuzzer.py"]
 CMD ["scan", "--help"]

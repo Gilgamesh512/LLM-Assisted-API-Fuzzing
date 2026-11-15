@@ -70,10 +70,20 @@ def convert_findings_to_sarif(
         if not curl_cmd and isinstance(item.get("reproduction"), dict):
             curl_cmd = item["reproduction"].get("curl")
 
+        # Sinh fingerprint ổn định (deterministic hash) cho GitHub Code Scanning / DefectDojo deduplication
+        import hashlib
+        param_name = str(item.get("target_parameter") or item.get("parameter") or "")
+        sig_str = f"{method}:{endpoint}:{param_name}:{vuln_type}"
+        loc_hash = hashlib.sha256(sig_str.encode("utf-8")).hexdigest()
+
         result_entry: dict[str, Any] = {
             "ruleId": rule_id,
             "level": level,
             "message": {"text": message_text},
+            "partialFingerprints": {
+                "primaryLocationLineHash": loc_hash,
+                "logicalLocationFingerprint/v1": loc_hash,
+            },
             "locations": [
                 {
                     "physicalLocation": {

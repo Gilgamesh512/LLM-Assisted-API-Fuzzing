@@ -39,9 +39,19 @@ from core.oracle import (  # noqa: E402
 )
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
 from core.providers import get_provider  # noqa: E402
-from core.safety import CleanupTracker, filter_safe_payloads, get_audit_headers  # noqa: E402
-from core.sanitizer import mask_spec_data, unmask_object  # noqa: E402
+from core.safety import (  # noqa: E402
+    CircuitBreaker,
+    CleanupTracker,
+    execute_auto_cleanup,
+    filter_safe_payloads,
+    get_audit_headers,
+)
+from core.sanitizer import mask_secrets_in_text, mask_spec_data, unmask_object  # noqa: E402
 from core.sarif import export_sarif_file  # noqa: E402
+from core.junit_export import export_junit_xml  # noqa: E402
+from core.notifier import send_webhook_notification  # noqa: E402
+from core.db_history import save_scan_run  # noqa: E402
+from core.compliance import build_owasp_compliance_matrix  # noqa: E402
 from core.stateful_chain import execute_stateful_bola_scan  # noqa: E402
 from core.tampering import execute_mass_assignment_scan, execute_verb_tampering_scan  # noqa: E402
 from core.telemetry import RunTelemetry  # noqa: E402
@@ -369,8 +379,18 @@ def run_full_scan(
     logic_scan: bool = False,
     har_path: str | Path | None = None,
     deep_verify: bool = True,
+    token_file: str | Path | None = None,
+    postman_env: str | Path | None = None,
+    auto_cleanup: bool = False,
+    export_junit: bool = False,
+    webhook_url: str | None = None,
 ) -> int:
     """Chạy toàn bộ vòng đời Fuzzing."""
+    if token_file and not auth_token:
+        tp = Path(token_file)
+        if tp.is_file():
+            auth_token = tp.read_text(encoding="utf-8").strip()
+
     if logic_scan:
         stateful = True
         mass_assignment = True
@@ -470,6 +490,7 @@ def run_full_scan(
                 proxy=proxy,
                 headers=parsed_custom_headers,
                 timeout=timeout,
+                postman_env=postman_env,
             )
     except Exception as exc:
         telemetry.stop("analyzer")
@@ -641,6 +662,7 @@ def run_full_scan(
 
         scope_guard = ScopeGuard(base_url, extra_allowed=allowed_hosts)
         rate_limiter = RateLimiter(delay_ms=delay_ms, max_rps=max_rps)
+        circuit_breaker = CircuitBreaker(failure_threshold=5)
 
         gen_budget = max(1, generations)
         current_fuzz_items = fuzz_items
@@ -650,6 +672,9 @@ def run_full_scan(
         for current_gen in range(gen_budget):
             if abort_event and abort_event.is_set():
                 print("      [!] Đã nhận tín hiệu dừng quét (Aborted).")
+                break
+            if circuit_breaker.is_tripped:
+                print(f"      [!] Circuit Breaker đã ngắt: {circuit_breaker.tripped_reason}. Dừng các thế hệ sau.")
                 break
 
             gen_label = f"Gen {current_gen + 1}/{gen_budget}"
@@ -676,7 +701,11 @@ def run_full_scan(
                     for fut in concurrent.futures.as_completed(future_map):
                         if abort_event and abort_event.is_set():
                             break
-                        gen_findings.append(fut.result())
+                        res_item = fut.result()
+                        gen_findings.append(res_item)
+                        if res_item.get("http_status") and circuit_breaker.record_response(res_item["http_status"]):
+                            print(f"      [!] Circuit Breaker ngắt: {circuit_breaker.tripped_reason}")
+                            break
             else:
                 for item in current_fuzz_items:
                     if abort_event and abort_event.is_set():
@@ -692,6 +721,9 @@ def run_full_scan(
                         abort_event=abort_event,
                     )
                     gen_findings.append(res)
+                    if res.get("http_status") and circuit_breaker.record_response(res["http_status"]):
+                        print(f"      [!] Circuit Breaker ngắt: {circuit_breaker.tripped_reason}")
+                        break
 
             print(f"      [OK] [{gen_label}] Đã hoàn thành bắn {len(gen_findings)} test cases.")
 
@@ -944,6 +976,42 @@ def run_full_scan(
         "Run Manifest": "manifest.json",
         "Cleanup & Rollback Manifest": "cleanup_manifest.json",
     }
+
+    # Xuất báo cáo chuẩn JUnit XML cho CI/CD nếu được bật
+    if export_junit:
+        junit_file = out_path / "junit.xml"
+        export_junit_xml(findings, target_name=derived_target_app, out_file=junit_file)
+        output_files["JUnit XML Report"] = str(junit_file.name)
+
+    # Tự động thực thi dọn dẹp / rollback dữ liệu nếu có cờ --auto-cleanup
+    if auto_cleanup:
+        print("[*] Đang thực thi Auto-Cleanup dọn dẹp các tài nguyên vừa tạo trên server target...")
+        cleanup_res = execute_auto_cleanup(cleanup_file, headers=parsed_custom_headers, insecure=insecure)
+        print(f"    [+] Auto-Cleanup hoàn tất: Đã xóa {cleanup_res.get('cleaned_count', 0)}/{cleanup_res.get('total_mutations', 0)} tài nguyên test.")
+
+    # Tính toán chỉ số tuân thủ OWASP API Top 10 (2023)
+    comp_matrix = build_owasp_compliance_matrix(findings)
+    comp_score = float(comp_matrix.get("compliance_score", 100.0))
+
+    # Lưu trữ lịch sử phiên quét vào SQLite database (Enterprise Audit History)
+    run_summary = {
+        "run_id": run_id,
+        "target_name": derived_target_app,
+        "target_url": target_url or "",
+        "provider": provider,
+        "model": model or provider_inst.model,
+        "gate_status": "PASS" if passed else "FAIL",
+        "fail_on": fail_on,
+        "total_findings": len(findings),
+        "critical_count": sum(1 for f in findings if str(f.get("severity", "")).lower() == "critical"),
+        "high_count": sum(1 for f in findings if str(f.get("severity", "")).lower() == "high"),
+        "medium_count": sum(1 for f in findings if str(f.get("severity", "")).lower() == "medium"),
+        "low_count": sum(1 for f in findings if str(f.get("severity", "")).lower() == "low"),
+        "compliance_score": comp_score,
+    }
+    save_scan_run(run_summary, findings, db_path=out_path / "history.db")
+    output_files["Audit History DB"] = "history.db"
+
     html_content = generate_html_report(
         findings,
         target_name=derived_target_app,
@@ -960,16 +1028,35 @@ def run_full_scan(
     html_file.write_text(html_content, encoding="utf-8")
     report_file.write_text(html_content, encoding="utf-8")
 
+    # Sinh mã băm SHA256 cho toàn bộ artifacts (Tamper-evident Audit)
+    import hashlib
+    checksum_lines: list[str] = []
+    for art_file in sorted(out_path.iterdir()):
+        if art_file.is_file() and art_file.name != "checksums.sha256":
+            sha = hashlib.sha256(art_file.read_bytes()).hexdigest()
+            checksum_lines.append(f"{sha}  {art_file.name}")
+    (out_path / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+
+    # Gửi thông báo Webhook (Slack / Teams / Discord) nếu có
+    if webhook_url:
+        print(f"[*] Đang gửi thông báo kết quả tới Webhook: {webhook_url}...")
+        wh_ok = send_webhook_notification(webhook_url, run_summary)
+        print(f"    [{'+' if wh_ok else '-'}] Gửi Webhook: {'Thành công' if wh_ok else 'Thất bại'}")
+
     print("-" * 65)
     print(" BÁO CÁO KẾT THÚC QUY TRÌNH:")
     print(f" [+] HTML Summary Report: {html_file}")
     print(f" [+] OASIS SARIF Report : {sarif_file}")
+    if export_junit:
+        print(f" [+] JUnit XML Report   : {out_path / 'junit.xml'}")
     print(f" [+] CSV Findings Report: {csv_file}")
     print(f" [+] NDJSON Findings    : {ndjson_file}")
     print(f" [+] Validated Payloads : {canonical_file}")
     print(f" [+] Fuzzing Payloads   : {fuzz_file}")
     print(f" [+] Run Manifest       : {out_path / 'manifest.json'}")
     print(f" [+] Cleanup Manifest   : {cleanup_file}")
+    print(f" [+] Artifact Checksums : {out_path / 'checksums.sha256'}")
+    print(f" [+] Audit History DB   : {out_path / 'history.db'}")
 
     print(f" [+] Security Gate ({fail_on}): {gate_msg}")
     print("=" * 65)
@@ -1017,6 +1104,11 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--logic-scan", action="store_true", help="Bật toàn bộ bộ kiểm thử Logic nghiệp vụ không cần payload độc (Stateful BOLA + Mass Assignment + Verb Tampering)")
     scan_parser.add_argument("--har", help="Đường dẫn file .har (HTTP Archive) để nạp hạt giống dữ liệu sống (Live Seed Corpus)")
     scan_parser.add_argument("--no-deep-verify", action="store_true", help="Tắt cơ chế Deep State Loopback Verification qua GET đối ứng")
+    scan_parser.add_argument("--token-file", help="Đường dẫn tệp chứa auth token (an toàn bảo mật cho CI/CD)")
+    scan_parser.add_argument("--postman-env", help="Đường dẫn file Postman Environment (.json) để nạp biến môi trường")
+    scan_parser.add_argument("--auto-cleanup", action="store_true", help="Tự động dọn dẹp các tài nguyên vừa tạo qua DELETE rollback")
+    scan_parser.add_argument("--export-junit", action="store_true", help="Xuất báo cáo định dạng JUnit XML (results/junit.xml)")
+    scan_parser.add_argument("--webhook-url", help="URL Webhook thông báo kết quả quét (Slack, Teams, Discord, REST)")
 
     # Command: ui / web
     ui_parser = subparsers.add_parser("ui", aliases=["web"], help="Khởi động giao diện Web UI điều khiển trực quan")
@@ -1065,6 +1157,11 @@ def main(argv: list[str] | None = None) -> int:
             logic_scan=args.logic_scan,
             har_path=args.har,
             deep_verify=not args.no_deep_verify,
+            token_file=args.token_file,
+            postman_env=args.postman_env,
+            auto_cleanup=args.auto_cleanup,
+            export_junit=args.export_junit,
+            webhook_url=args.webhook_url,
         )
     else:
         parser.print_help()

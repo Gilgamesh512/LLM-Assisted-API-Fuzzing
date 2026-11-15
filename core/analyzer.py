@@ -49,6 +49,24 @@ class SpecLoadError(RuntimeError):
     """Lỗi khi không đọc/parse được file đặc tả API."""
 
 
+def load_postman_env(env_path: Path | str) -> dict[str, str]:
+    """Đọc file Postman Environment JSON và trả về dict {key: value}."""
+    p = Path(env_path)
+    if not p.is_file():
+        return {}
+    try:
+        data = json.loads(p.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return {}
+    env_vars: dict[str, str] = {}
+    values = data.get("values", [])
+    if isinstance(values, list):
+        for v in values:
+            if isinstance(v, dict) and "key" in v and v.get("enabled", True) is not False:
+                env_vars[str(v["key"])] = str(v.get("value", ""))
+    return env_vars
+
+
 def load_spec(
     path_or_url: str | Path,
     *,
@@ -56,6 +74,7 @@ def load_spec(
     proxy: str | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 20.0,
+    postman_env: Path | str | dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Đọc file OpenAPI/Swagger JSON hoặc YAML từ đường dẫn cục bộ hoặc Remote URL thành dict."""
     target_str = str(path_or_url).strip()
@@ -107,7 +126,8 @@ def load_spec(
 
     # Nhận diện Postman Collection v2 / v2.1
     if "item" in spec and ("info" in spec or "variable" in spec):
-        return _convert_postman_to_openapi(spec)
+        env_dict = postman_env if isinstance(postman_env, dict) else load_postman_env(postman_env) if postman_env else None
+        return _convert_postman_to_openapi(spec, env_vars=env_dict)
 
     if "paths" not in spec:
         raise SpecLoadError(f"Đặc tả thiếu khoá 'paths' (có phải OpenAPI/Swagger không?): {target_str}")
@@ -115,9 +135,20 @@ def load_spec(
     return spec
 
 
-def _convert_postman_to_openapi(postman_data: dict[str, Any]) -> dict[str, Any]:
+def _convert_postman_to_openapi(
+    postman_data: dict[str, Any],
+    env_vars: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Chuyển đổi sơ bộ Postman Collection sang OpenAPI paths để LLM có thể phân tích."""
     paths: dict[str, Any] = {}
+    active_env = dict(env_vars or {})
+
+    def _resolve_env(txt: str) -> str:
+        if not txt or not isinstance(txt, str):
+            return txt
+        for k, v in active_env.items():
+            txt = txt.replace(f"{{{{{k}}}}}", v)
+        return txt
 
     def _extract_items(items: list[Any]) -> None:
         for item in items:
@@ -136,13 +167,14 @@ def _convert_postman_to_openapi(postman_data: dict[str, Any]) -> dict[str, Any]:
             raw_path = "/"
 
             if isinstance(url_obj, str):
-                raw_path = "/" + url_obj.split("://", 1)[-1].partition("/")[2]
+                resolved_url = _resolve_env(url_obj)
+                raw_path = "/" + resolved_url.split("://", 1)[-1].partition("/")[2]
             elif isinstance(url_obj, dict):
-                raw_url = url_obj.get("raw", "")
+                raw_url = _resolve_env(str(url_obj.get("raw", "")))
                 if "://" in raw_url:
                     raw_path = "/" + raw_url.split("://", 1)[-1].partition("/")[2]
                 elif "path" in url_obj and isinstance(url_obj["path"], list):
-                    raw_path = "/" + "/".join(str(p) for p in url_obj["path"])
+                    raw_path = "/" + "/".join(_resolve_env(str(p)) for p in url_obj["path"])
 
             # Loại bỏ query string nếu còn dính trong path
             raw_path = raw_path.split("?", 1)[0]
@@ -662,6 +694,7 @@ def analyze_file(
     proxy: str | None = None,
     headers: dict[str, str] | None = None,
     timeout: float = 20.0,
+    postman_env: Path | str | dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Phân tích đặc tả API từ file cục bộ hoặc remote URL.
     
@@ -677,7 +710,7 @@ def analyze_file(
                 from core.har_parser import har_to_endpoints
                 return har_to_endpoints(p)
 
-    spec = load_spec(path_or_url, insecure=insecure, proxy=proxy, headers=headers, timeout=timeout)
+    spec = load_spec(path_or_url, insecure=insecure, proxy=proxy, headers=headers, timeout=timeout, postman_env=postman_env)
     base_dir = Path(path_or_url).parent if not target_str.startswith(("http://", "https://")) else None
     return analyze(spec, base_dir=base_dir)
 

@@ -1,0 +1,74 @@
+name: "API Security Fuzzing & Quality Gate"
+
+on:
+  push:
+    branches: [ "main", "master", "develop" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  schedule:
+    # Quét định kỳ hàng ngày vào 02:00 UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  fuzz-and-analyze:
+    name: "API Fuzzing & DevSecOps Gate"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout Repository"
+        uses: actions/checkout@v4
+
+      - name: "Set up Python 3.11"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: "Install Dependencies"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest
+
+      - name: "Run Unit Tests & Regression"
+        run: |
+          python -m pytest tests/ -v
+
+      - name: "Execute LLM-Assisted API Fuzzing Scan"
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          # Chạy kiểm thử tự động, sinh SARIF, JUnit XML, HTML Dashboard và chặn nếu có lỗi Critical/High
+          python fuzzer.py scan dataset/vampi_openapi.json \
+            --provider gemini \
+            --dry-run \
+            --fail-on high \
+            --export-junit \
+            --out-dir results
+
+      - name: "Upload SARIF Results to GitHub Code Scanning"
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: results/findings_summary.sarif
+          category: "llm-api-fuzzing"
+
+      - name: "Upload Security Reports & Artifacts"
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-fuzzing-reports
+          path: |
+            results/findings_summary.html
+            results/report.html
+            results/findings_summary.sarif
+            results/junit.xml
+            results/cleanup_manifest.json
+            results/checksums.sha256

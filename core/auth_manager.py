@@ -24,9 +24,11 @@ class TokenManager:
     def __init__(
         self,
         *,
-        auth_type: str = "static",  # "static" | "login" | "oauth2"
+        auth_type: str = "static",  # "static" | "login" | "oauth2" | "refresh_token"
         static_token: str | None = None,
         login_url: str | None = None,
+        refresh_url: str | None = None,
+        refresh_token: str | None = None,
         credentials: dict[str, Any] | None = None,
         token_extractor: Callable[[dict[str, Any]], str] | None = None,
         header_name: str = "Authorization",
@@ -36,6 +38,8 @@ class TokenManager:
         self.auth_type = auth_type.lower()
         self.static_token = static_token
         self.login_url = login_url
+        self.refresh_url = refresh_url or login_url
+        self.refresh_token = refresh_token
         self.credentials = dict(credentials or {})
         self.token_extractor = token_extractor
         self.header_name = header_name
@@ -58,14 +62,20 @@ class TokenManager:
         if self.auth_type == "static":
             return self.static_token or ""
 
-        if not self.login_url:
-            raise AuthProviderError("Cần login_url để thực hiện refresh token.")
+        target_url = self.refresh_url if self.auth_type == "refresh_token" else (self.login_url or self.refresh_url)
+        if not target_url:
+            raise AuthProviderError("Cần login_url hoặc refresh_url để thực hiện refresh token.")
 
         client = session or requests
+        req_body = dict(self.credentials)
+        if self.auth_type == "refresh_token" and self.refresh_token:
+            req_body.setdefault("refresh_token", self.refresh_token)
+            req_body.setdefault("grant_type", "refresh_token")
+
         try:
-            resp = client.post(self.login_url, json=self.credentials, timeout=15)
+            resp = client.post(target_url, json=req_body, timeout=15)
         except Exception as exc:
-            raise AuthProviderError(f"Lỗi kết nối tới auth endpoint {self.login_url}: {exc}") from exc
+            raise AuthProviderError(f"Lỗi kết nối tới auth endpoint {target_url}: {exc}") from exc
 
         if not resp.ok:
             raise AuthProviderError(f"Xác thực thất bại ({resp.status_code}): {resp.text[:300]}")
@@ -89,6 +99,11 @@ class TokenManager:
             raise AuthProviderError(f"Không trích xuất được token từ phản hồi auth: {data}")
 
         self._current_token = str(token)
+        # Cập nhật refresh_token mới nếu server cấp lại (rolling refresh)
+        new_refresh = data.get("refresh_token")
+        if new_refresh:
+            self.refresh_token = str(new_refresh)
+
         self._expires_at = time.time() + self.ttl_seconds
         return self._current_token
 
@@ -119,4 +134,22 @@ class TokenManager:
         return False
 
 
-__all__ = ["AuthProviderError", "TokenManager"]
+def extract_csrf_token(response: requests.Response) -> str | None:
+    """Tự động phát hiện và trích xuất CSRF Token từ Cookies hoặc Headers."""
+    # 1. Tìm trong Cookies
+    cookie_candidates = ("csrf_token", "csrftoken", "xsrf-token", "XSRF-TOKEN", "_csrf", "csrf")
+    for cookie_name in cookie_candidates:
+        if cookie_name in response.cookies:
+            return response.cookies[cookie_name]
+
+    # 2. Tìm trong Headers phản hồi
+    header_candidates = ("X-CSRF-Token", "X-XSRF-Token", "CSRF-Token", "X-CSRFToken")
+    for h in header_candidates:
+        val = response.headers.get(h)
+        if val:
+            return val
+
+    return None
+
+
+__all__ = ["AuthProviderError", "TokenManager", "extract_csrf_token"]

@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llm-assisted-api-fuzzer"
+version = "1.0.0"
+description = "Enterprise LLM-Assisted Context-Aware API Security Fuzzing Engine & OASIS SARIF Reporting"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [
+    { name = "DevSecOps Engineering Team" }
+]
+keywords = [
+    "api-fuzzing",
+    "dast",
+    "security-testing",
+    "llm",
+    "owasp-api-top-10",
+    "sarif",
+    "devsecops"
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development :: Testing",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "pydantic>=2.6,<3",
+    "pyyaml>=6.0",
+    "requests>=2.31",
+    "jsonschema>=4.20,<5",
+    "flask>=3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+]
+
+[project.scripts]
+llm-fuzzer = "fuzzer:main"
+llm-fuzzer-ui = "web_ui:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "fuzzer*"]

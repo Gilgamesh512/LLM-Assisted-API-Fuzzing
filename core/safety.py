@@ -162,6 +162,87 @@ class CleanupTracker:
         return p
 
 
+class CircuitBreaker:
+    """Bảo vệ Target server khỏi bị quá tải/sập: Ngắt luồng gửi nếu gặp lỗi server 502/503/504 liên tiếp."""
+
+    def __init__(self, failure_threshold: int = 5) -> None:
+        self.failure_threshold = failure_threshold
+        self.consecutive_failures = 0
+        self.is_tripped = False
+        self.tripped_reason = ""
+
+    def record_response(self, status_code: int) -> bool:
+        """Ghi nhận response status. Trả về True nếu breaker bị ngắt (tripped)."""
+        if status_code in (502, 503, 504):
+            self.consecutive_failures += 1
+            if self.consecutive_failures >= self.failure_threshold:
+                self.is_tripped = True
+                self.tripped_reason = f"Target API phản hồi mã lỗi {status_code} liên tiếp {self.consecutive_failures} lần."
+                return True
+        else:
+            self.consecutive_failures = 0
+        return False
+
+
+def execute_auto_cleanup(
+    manifest_path: Path | str,
+    *,
+    session: Any = None,
+    headers: dict[str, str] | None = None,
+    insecure: bool = False,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    """Tự động đọc cleanup_manifest.json và thực hiện DELETE rollback cho các tài nguyên vừa tạo."""
+    p = Path(manifest_path)
+    if not p.is_file():
+        return {"status": "skipped", "message": f"Không tìm thấy manifest: {p}", "cleaned_count": 0}
+
+    import requests
+
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"status": "error", "message": f"Không parse được manifest JSON: {exc}", "cleaned_count": 0}
+
+    mutations = data.get("mutations", [])
+    client = session or requests
+    cleaned_count = 0
+    errors: list[str] = []
+
+    for item in mutations:
+        method = str(item.get("method") or "").upper()
+        url = str(item.get("url") or "")
+        identifier = item.get("identifier")
+        clean_url = ""
+
+        if method == "POST" and identifier:
+            clean_url = f"{url.rstrip('/')}/{identifier}"
+        elif method == "POST" and not identifier:
+            continue
+
+        if clean_url:
+            try:
+                resp = client.delete(
+                    clean_url,
+                    headers=headers or {},
+                    verify=not insecure,
+                    timeout=timeout,
+                )
+                if resp.status_code in (200, 202, 204, 404):
+                    cleaned_count += 1
+                else:
+                    errors.append(f"DELETE {clean_url} trả về {resp.status_code}")
+            except Exception as e:
+                errors.append(f"DELETE {clean_url} thất bại: {e}")
+
+    return {
+        "status": "completed",
+        "total_mutations": len(mutations),
+        "cleaned_count": cleaned_count,
+        "errors": errors,
+    }
+
+
 __all__ = [
     "DESTRUCTIVE_METHODS",
     "DESTRUCTIVE_PATH_PATTERNS",
@@ -172,4 +253,6 @@ __all__ = [
     "filter_safe_payloads",
     "CleanupTracker",
     "MutatedResource",
+    "CircuitBreaker",
+    "execute_auto_cleanup",
 ]
