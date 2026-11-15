@@ -93,12 +93,53 @@ class LocalProvider(BaseProvider):
         )
 
 
+class OfflineProvider(BaseProvider):
+    """Provider offline / CI-CD baseline phục vụ kiểm thử pipeline không cần API key hay mạng."""
+    name = "offline"
+    default_model = "rule-based-baseline"
+    api_key_env = None
+
+    def resolve_api_key(self) -> str:
+        return "offline"
+
+    def generate(self, prompt: str, *, system_prompt: str | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        import json
+        sample_payloads = [
+            {
+                "method": "GET",
+                "path": "/users",
+                "target_parameter": "id",
+                "location": "query",
+                "vulnerability_type": "SQLi",
+                "payload_value": "1' OR '1'='1",
+                "rationale": "Offline baseline payload checking SQL injection on query parameter",
+                "expected_indicator": "HTTP 500 or SQL syntax error",
+            },
+            {
+                "method": "POST",
+                "path": "/users",
+                "target_parameter": "role",
+                "location": "body",
+                "vulnerability_type": "BOLA",
+                "payload_value": "admin",
+                "rationale": "Offline baseline payload checking privilege escalation",
+                "expected_indicator": "HTTP 200 with admin role",
+            },
+        ]
+        return {
+            "reply": json.dumps(sample_payloads),
+            "usage": {"prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150},
+        }
+
+
 PROVIDERS: dict[str, type[BaseProvider]] = {
     "gemini": GeminiProvider,
     "deepseek": DeepSeekProvider,
     "local": LocalProvider,
     "ollama": LocalProvider,
     "vllm": LocalProvider,
+    "offline": OfflineProvider,
+    "mock": OfflineProvider,
 }
 
 
@@ -117,6 +158,7 @@ __all__ = [
     "GeminiProvider",
     "DeepSeekProvider",
     "LocalProvider",
+    "OfflineProvider",
     "PROVIDERS",
     "get_provider",
 ]

@@ -1074,7 +1074,7 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("spec", nargs="?", default=None, help="Đường dẫn file OpenAPI/Swagger, file raw endpoints (.txt), remote URL, hoặc 'auto'")
     scan_parser.add_argument("--target-url", "-u", help="URL hoặc IP máy chủ API đích (vd: http://192.168.1.100:8000)")
     scan_parser.add_argument("--target-name", "--app", help="Tên ứng dụng/dịch vụ đích để gán nhãn báo cáo (mặc định suy ra từ URL hoặc file)")
-    scan_parser.add_argument("--provider", "-p", choices=["gemini", "deepseek", "local", "ollama", "vllm"], default="gemini", help="LLM Provider")
+    scan_parser.add_argument("--provider", "-p", choices=["gemini", "deepseek", "local", "ollama", "vllm", "offline", "mock"], default="gemini", help="LLM Provider")
     scan_parser.add_argument("--model", "-m", help="Tên model LLM")
     scan_parser.add_argument("--out-dir", "-o", default="results", help="Thư mục xuất báo cáo")
     scan_parser.add_argument("--no-safe-mode", action="store_true", help="Tắt Safe Mode (cho phép bắn DELETE và destructive endpoints)")

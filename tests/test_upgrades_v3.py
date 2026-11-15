@@ -308,3 +308,16 @@ def test_web_ui_healthz_and_readyz() -> None:
     assert resp_r.status_code == 200
     data_r = resp_r.get_json()
     assert "ready" in data_r
+
+
+def test_offline_provider_generation() -> None:
+    from core.providers import get_provider
+    prov = get_provider("offline")
+    assert prov.resolve_api_key() == "offline"
+    res = prov.generate("dummy prompt")
+    assert "reply" in res
+    assert "usage" in res
+    payloads = json.loads(res["reply"])
+    assert isinstance(payloads, list)
+    assert len(payloads) >= 1
+    assert payloads[0]["vulnerability_type"] in ("SQLi", "BOLA")

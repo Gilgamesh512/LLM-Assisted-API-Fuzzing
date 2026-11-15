@@ -45,24 +45,42 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
         run: |
-          # Chạy kiểm thử tự động, sinh SARIF, JUnit XML, HTML Dashboard và chặn nếu có lỗi Critical/High
-          python fuzzer.py scan dataset/vampi_openapi.json \
-            --provider gemini \
-            --dry-run \
-            --fail-on high \
-            --export-junit \
-            --out-dir results
+          if [ -n "$GEMINI_API_KEY" ]; then
+            echo "[*] Phát hiện GEMINI_API_KEY trong GitHub Secrets. Chạy chế độ LLM Fuzzing với Gemini..."
+            python fuzzer.py scan dataset/vampi_openapi.json \
+              --provider gemini \
+              --dry-run \
+              --fail-on high \
+              --export-junit \
+              --out-dir results
+          elif [ -n "$DEEPSEEK_API_KEY" ]; then
+            echo "[*] Phát hiện DEEPSEEK_API_KEY trong GitHub Secrets. Chạy chế độ LLM Fuzzing với DeepSeek..."
+            python fuzzer.py scan dataset/vampi_openapi.json \
+              --provider deepseek \
+              --dry-run \
+              --fail-on high \
+              --export-junit \
+              --out-dir results
+          else
+            echo "::warning::Chưa cấu hình GEMINI_API_KEY trong GitHub Secrets. Chạy chế độ Offline Rule-Based Fuzzing để xác thực toàn vẹn Pipeline..."
+            python fuzzer.py scan dataset/vampi_openapi.json \
+              --provider offline \
+              --dry-run \
+              --fail-on high \
+              --export-junit \
+              --out-dir results
+          fi
 
       - name: "Upload SARIF Results to GitHub Code Scanning"
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        if: always() && hashFiles('results/findings_summary.sarif') != ''
         with:
           sarif_file: results/findings_summary.sarif
           category: "llm-api-fuzzing"
 
       - name: "Upload Security Reports & Artifacts"
         uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && hashFiles('results/**') != ''
         with:
           name: api-fuzzing-reports
           path: |
