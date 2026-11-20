@@ -384,6 +384,10 @@ def run_full_scan(
     auto_cleanup: bool = False,
     export_junit: bool = False,
     webhook_url: str | None = None,
+    verify_tokens: bool = False,
+    verify_callbacks: bool = False,
+    seal_report: bool = False,
+    graphql: bool = False,
 ) -> int:
     """Chạy toàn bộ vòng đời Fuzzing."""
     if token_file and not auth_token:
@@ -886,6 +890,167 @@ def run_full_scan(
                 findings.extend(vt_findings)
             else:
                 print("      [OK] Hoàn tất kiểm thử Verb Tampering: các phương thức HTTP đều an toàn.")
+
+        # Kiểm thử Broken Authentication trên JWT nếu có cờ --verify-tokens
+        if verify_tokens and auth_token and base_url:
+            print("[*] BẬT KIỂM THỬ RFC 7519 JWT BROKEN AUTHENTICATION (alg:none, signature strip, expired, weak secret)...")
+            try:
+                from core.token_verifier import TokenVerifier
+                jwt_token_val = f"{auth_prefix}{auth_token}" if auth_prefix and not auth_token.startswith(auth_prefix) else auth_token
+
+                # 1. Kiểm tra offline bẻ khóa HMAC secret
+                offline_findings = TokenVerifier.audit_token_offline(jwt_token_val, target_name=derived_target_app)
+                if offline_findings:
+                    print(f"      [!] CẢNH BÁO: PHÁT HIỆN SECRET KEY YẾU TRÊN TOKEN JWT!")
+                    findings.extend(offline_findings)
+
+                # 2. Kiểm thử đa luồng trên các endpoints
+                jwt_findings = []
+                target_eps = endpoints[:20]
+                with concurrent.futures.ThreadPoolExecutor(max_workers=min(concurrency, len(target_eps) or 1)) as executor:
+                    futures = [
+                        executor.submit(
+                            TokenVerifier.audit_endpoint,
+                            base_url=base_url,
+                            endpoint=ep.get("path", "/"),
+                            method=ep.get("method", "GET"),
+                            valid_auth_header=jwt_token_val,
+                            auth_header=auth_header,
+                            auth_prefix=auth_prefix,
+                            custom_headers=parsed_custom_headers,
+                            timeout=timeout,
+                            insecure=insecure,
+                            target_name=derived_target_app,
+                        )
+                        for ep in target_eps
+                    ]
+                    for f in concurrent.futures.as_completed(futures):
+                        try:
+                            ep_findings = f.result()
+                            if ep_findings:
+                                jwt_findings.extend(ep_findings)
+                        except Exception:
+                            pass
+
+                if jwt_findings:
+                    print(f"      [!] PHÁT HIỆN {len(jwt_findings)} LỖ HỔNG XÁC THỰC JWT TRÊN CÁC ROUTE!")
+                    findings.extend(jwt_findings)
+                else:
+                    print("      [OK] Hoàn tất kiểm thử JWT: Server xác thực token an toàn và tuân thủ RFC 7519.")
+            except Exception as e:
+                print(f"      [!] Kiểm thử JWT gặp lỗi: {e}")
+
+        # Kiểm thử SSRF chủ động nếu có cờ --verify-callbacks
+        if verify_callbacks and base_url:
+            print("[*] KHỞI ĐỘNG LOCAL CALLBACK LISTENER ĐỂ BẮT BLIND SSRF & CLOUD METADATA...")
+            try:
+                from core.callback_verifier import CallbackVerifier, LocalCallbackListener
+                listener = LocalCallbackListener()
+                listener.start()
+                try:
+                    cb_headers = dict(parsed_custom_headers or {})
+                    if auth_token:
+                        cb_headers[auth_header] = f"{auth_prefix}{auth_token}" if auth_prefix and not auth_token.startswith(auth_prefix) else auth_token
+
+                    ssrf_findings = []
+                    target_eps = endpoints[:20]
+                    # Chạy đa luồng kiểm thử SSRF callback
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=min(concurrency, len(target_eps) or 1)) as executor:
+                        futures = [
+                            executor.submit(
+                                CallbackVerifier.audit_endpoint_ssrf,
+                                base_url=base_url,
+                                endpoint=ep.get("path", "/"),
+                                method=ep.get("method", "GET"),
+                                listener=listener,
+                                headers=cb_headers,
+                                timeout=timeout,
+                                insecure=insecure,
+                                target_name=derived_target_app,
+                            )
+                            for ep in target_eps
+                        ]
+                        for f in concurrent.futures.as_completed(futures):
+                            try:
+                                hits = f.result()
+                                if hits:
+                                    ssrf_findings.extend(hits)
+                            except Exception:
+                                pass
+
+                    # Kiểm thử Cloud Metadata SSRF cho top endpoints
+                    for ep in target_eps[:5]:
+                        cloud_hits = CallbackVerifier.audit_endpoint_cloud_metadata(
+                            base_url=base_url,
+                            endpoint=ep.get("path", "/"),
+                            method=ep.get("method", "GET"),
+                            headers=cb_headers,
+                            timeout=timeout,
+                            insecure=insecure,
+                            target_name=derived_target_app,
+                        )
+                        if cloud_hits:
+                            ssrf_findings.extend(cloud_hits)
+
+                    if ssrf_findings:
+                        print(f"      [!] PHÁT HIỆN {len(ssrf_findings)} LỖ HỔNG SSRF XÁC MINH QUA CALLBACK / CLOUD METADATA!")
+                        findings.extend(ssrf_findings)
+                    else:
+                        print("      [OK] Hoàn tất kiểm thử SSRF: Không phát hiện callback trái phép hoặc rò rỉ Metadata.")
+                finally:
+                    listener.stop()
+            except Exception as e:
+                print(f"      [!] Kiểm thử SSRF Callback gặp lỗi: {e}")
+
+        # Kiểm thử chuyên sâu GraphQL nếu có cờ --graphql hoặc target trỏ tới /graphql
+        is_graphql_target = graphql or (base_url and base_url.endswith("/graphql")) or (spec_target and "/graphql" in spec_target.lower())
+        if is_graphql_target and base_url:
+            print("[*] BẬT KIỂM THỬ BẢO MẬT GRAPHQL CHUYÊN SÂU (Introspection Audit, Query Depth DoS & LLM Probes)...")
+            try:
+                from core.graphql_engine import audit_graphql_endpoint, build_graphql_fuzz_prompt, execute_graphql_fuzz_probes
+                gql_url = base_url if base_url.endswith("/graphql") else f"{base_url}/graphql"
+                gql_headers = dict(parsed_custom_headers or {})
+                if auth_token:
+                    gql_headers[auth_header] = f"{auth_prefix}{auth_token}" if auth_prefix and not auth_token.startswith(auth_prefix) else auth_token
+
+                gql_findings, summary = audit_graphql_endpoint(
+                    gql_url,
+                    headers=gql_headers,
+                    timeout=timeout,
+                    insecure=insecure,
+                    target_name=derived_target_app,
+                )
+                if gql_findings:
+                    print(f"      [!] PHÁT HIỆN {len(gql_findings)} LỖ HỔNG / RỦI RO GRAPHQL CẤU HÌNH!")
+                    findings.extend(gql_findings)
+
+                # Nếu LLM có sẵn và lấy được Schema, gọi LLM sinh query kiểm thử logic sâu
+                if summary and provider != "offline":
+                    try:
+                        print("      [*] Gửi GraphQL Schema context cho LLM để sinh attack queries...")
+                        gql_prompt = build_graphql_fuzz_prompt(summary)
+                        gql_res = provider_inst.generate(gql_prompt)
+                        if gql_res and gql_res.text:
+                            from core.validator import extract_json_from_text
+                            gql_payloads = extract_json_from_text(gql_res.text)
+                            if isinstance(gql_payloads, list):
+                                runtime_gql_findings = execute_graphql_fuzz_probes(
+                                    gql_url,
+                                    gql_payloads,
+                                    headers=gql_headers,
+                                    timeout=timeout,
+                                    insecure=insecure,
+                                    target_name=derived_target_app,
+                                )
+                                if runtime_gql_findings:
+                                    print(f"      [!] PHÁT HIỆN {len(runtime_gql_findings)} LỖ HỔNG TỪ LLM GRAPHQL PROBES!")
+                                    findings.extend(runtime_gql_findings)
+                    except Exception:
+                        pass
+                elif not gql_findings:
+                    print("      [OK] Endpoint GraphQL an toàn (Introspection bị tắt và có giới hạn độ sâu).")
+            except Exception as e:
+                print(f"      [!] Kiểm thử GraphQL gặp lỗi: {e}")
     else:
         print("[5/6] Bỏ qua Fuzzing runtime (chế độ Dry Run hoặc chưa cấu hình URL).")
         for p in payloads:
@@ -1025,6 +1190,13 @@ def run_full_scan(
         output_files=output_files,
         baseline_diff=diff,
     )
+    if seal_report:
+        try:
+            from core.hmac_sealer import seal_html_report
+            html_content = seal_html_report(html_content)
+            print("[*] Đã niêm phong báo cáo HTML bằng chữ ký HMAC-SHA256 chống giả mạo.")
+        except Exception as e:
+            print(f"[-] Lỗi khi niêm phong báo cáo: {e}")
     html_file.write_text(html_content, encoding="utf-8")
     report_file.write_text(html_content, encoding="utf-8")
 
@@ -1036,6 +1208,14 @@ def run_full_scan(
             sha = hashlib.sha256(art_file.read_bytes()).hexdigest()
             checksum_lines.append(f"{sha}  {art_file.name}")
     (out_path / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
+
+    # Xuất Postman Collection PoC 1-Click Reproduce
+    poc_file = None
+    try:
+        from core.poc_exporter import export_postman_poc_collection
+        poc_file = export_postman_poc_collection(findings, target_name=derived_target_app, out_file=out_path / "poc_collection.json")
+    except Exception:
+        pass
 
     # Gửi thông báo Webhook (Slack / Teams / Discord) nếu có
     if webhook_url:
@@ -1049,6 +1229,8 @@ def run_full_scan(
     print(f" [+] OASIS SARIF Report : {sarif_file}")
     if export_junit:
         print(f" [+] JUnit XML Report   : {out_path / 'junit.xml'}")
+    if poc_file:
+        print(f" [+] Postman PoC Export : {poc_file}")
     print(f" [+] CSV Findings Report: {csv_file}")
     print(f" [+] NDJSON Findings    : {ndjson_file}")
     print(f" [+] Validated Payloads : {canonical_file}")
@@ -1109,6 +1291,10 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--auto-cleanup", action="store_true", help="Tự động dọn dẹp các tài nguyên vừa tạo qua DELETE rollback")
     scan_parser.add_argument("--export-junit", action="store_true", help="Xuất báo cáo định dạng JUnit XML (results/junit.xml)")
     scan_parser.add_argument("--webhook-url", help="URL Webhook thông báo kết quả quét (Slack, Teams, Discord, REST)")
+    scan_parser.add_argument("--verify-tokens", action="store_true", help="Kiểm thử RFC 7519 Broken Authentication cho JWT (alg:none, signature strip, expired)")
+    scan_parser.add_argument("--verify-callbacks", action="store_true", help="Khởi động in-memory HTTP listener để xác minh Blind SSRF chủ động")
+    scan_parser.add_argument("--seal-report", action="store_true", help="Niêm phong báo cáo HTML bằng chữ ký số HMAC-SHA256 chống giả mạo")
+    scan_parser.add_argument("--graphql", action="store_true", help="Kích hoạt kiểm thử bảo mật chuyên sâu cho GraphQL API (Introspection & Query Depth DoS)")
 
     # Command: ui / web
     ui_parser = subparsers.add_parser("ui", aliases=["web"], help="Khởi động giao diện Web UI điều khiển trực quan")
@@ -1116,11 +1302,31 @@ def main(argv: list[str] | None = None) -> int:
     ui_parser.add_argument("--host", default="127.0.0.1", help="Địa chỉ bind (mặc định: 127.0.0.1)")
     ui_parser.add_argument("--open-browser", action="store_true", help="Tự động mở trình duyệt web khi khởi động")
 
+    # Command: verify
+    verify_parser = subparsers.add_parser("verify", help="Kiểm tra tính toàn vẹn và chữ ký số HMAC-SHA256 của báo cáo bảo mật HTML")
+    verify_parser.add_argument("report", help="Đường dẫn file báo cáo HTML (results/findings_summary.html)")
+    verify_parser.add_argument("--key", help="Khóa bí mật HMAC (mặc định đọc từ REPORT_SIGNING_KEY)")
+
     args = parser.parse_args(argv)
 
     if args.command in ("ui", "web"):
         from web_ui import start_web_ui
         return start_web_ui(host=args.host, port=args.port, open_browser=args.open_browser)
+
+    elif args.command == "verify":
+        from core.hmac_sealer import verify_sealed_html_report
+        p = Path(args.report)
+        if not p.is_file():
+            print(f"[ERROR] Không tìm thấy file báo cáo: {args.report}", file=sys.stderr)
+            return 1
+        content = p.read_text(encoding="utf-8")
+        is_valid = verify_sealed_html_report(content, secret_key=args.key)
+        if is_valid:
+            print(f"[OK] BÁO CÁO HỢP LỆ! Chữ ký số HMAC-SHA256 trùng khớp, báo cáo '{args.report}' toàn vẹn không bị can thiệp.")
+            return 0
+        else:
+            print(f"[FAIL] CẢNH BÁO BẢO MẬT: Báo cáo '{args.report}' đã bị chỉnh sửa hoặc chữ ký số không hợp lệ!", file=sys.stderr)
+            return 1
 
     elif args.command == "scan":
         return run_full_scan(
@@ -1162,6 +1368,10 @@ def main(argv: list[str] | None = None) -> int:
             auto_cleanup=args.auto_cleanup,
             export_junit=args.export_junit,
             webhook_url=args.webhook_url,
+            verify_tokens=args.verify_tokens,
+            verify_callbacks=args.verify_callbacks,
+            seal_report=args.seal_report,
+            graphql=args.graphql,
         )
     else:
         parser.print_help()

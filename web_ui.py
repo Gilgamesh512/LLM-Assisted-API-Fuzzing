@@ -139,6 +139,10 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
             logic_scan=bool(params.get("logic_scan", False)),
             har_path=params.get("har_path") or None,
             deep_verify=bool(params.get("deep_verify", True)),
+            verify_tokens=bool(params.get("verify_tokens", False)),
+            verify_callbacks=bool(params.get("verify_callbacks", False)),
+            seal_report=bool(params.get("seal_report", False)),
+            graphql=bool(params.get("graphql", False)),
         )
 
         # Đọc kết quả summary nếu có
@@ -637,6 +641,22 @@ INDEX_HTML = """<!DOCTYPE html>
                             <input type="checkbox" id="verbTampering" checked>
                         </div>
                         <div class="toggle-group">
+                            <span class="toggle-label">JWT Broken Auth Audit (RFC 7519)</span>
+                            <input type="checkbox" id="verifyTokens">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Active Blind SSRF Callback Verifier</span>
+                            <input type="checkbox" id="verifyCallbacks">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">GraphQL Security Audit (/graphql)</span>
+                            <input type="checkbox" id="graphqlScan">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">HMAC-SHA256 Report Sealing (Chống giả mạo)</span>
+                            <input type="checkbox" id="sealReport">
+                        </div>
+                        <div class="toggle-group">
                             <span class="toggle-label">Safe Mode (Chặn DELETE & Phá hoại)</span>
                             <input type="checkbox" id="safeMode" checked>
                         </div>
@@ -860,6 +880,10 @@ INDEX_HTML = """<!DOCTYPE html>
                 mass_assignment: document.getElementById("massAssignment").checked,
                 deep_verify: document.getElementById("deepVerify") ? document.getElementById("deepVerify").checked : true,
                 verb_tampering: document.getElementById("verbTampering").checked,
+                verify_tokens: document.getElementById("verifyTokens") ? document.getElementById("verifyTokens").checked : false,
+                verify_callbacks: document.getElementById("verifyCallbacks") ? document.getElementById("verifyCallbacks").checked : false,
+                graphql: document.getElementById("graphqlScan") ? document.getElementById("graphqlScan").checked : false,
+                seal_report: document.getElementById("sealReport") ? document.getElementById("sealReport").checked : false,
                 har_path: document.getElementById("harPath") ? (document.getElementById("harPath").value.trim() || null) : null,
             };
 
@@ -1004,6 +1028,20 @@ def download_artifact(filename: str):
     if not file_path.is_file():
         return jsonify({"error": f"Không tìm thấy tệp: {filename}"}), 404
     return send_from_directory(out_dir, filename, as_attachment=True)
+
+
+@app.route("/api/verify-report", methods=["POST"])
+def verify_report_api():
+    out_dir = Path(scan_state.get("out_dir", "results"))
+    report_file = out_dir / "report.html"
+    if not report_file.is_file():
+        report_file = out_dir / "findings_summary.html"
+    if not report_file.is_file():
+        return jsonify({"valid": False, "error": "Chưa có báo cáo HTML nào được sinh ra."}), 404
+    from core.hmac_sealer import verify_sealed_html_report
+    content = report_file.read_text(encoding="utf-8")
+    is_valid = verify_sealed_html_report(content)
+    return jsonify({"valid": is_valid, "file": str(report_file.name)})
 
 
 @app.route("/api/env-status")

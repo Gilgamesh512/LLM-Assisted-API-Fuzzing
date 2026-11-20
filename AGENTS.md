@@ -29,6 +29,11 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
    - `core/tampering.py`: Kiểm thử logic không cần payload độc (Mass Assignment / Parameter Tampering & HTTP Verb Tampering/Tunneling).
    - **Deep State Loopback Verification**: Sau các request thay đổi trạng thái (POST/PUT/PATCH), tự động thực hiện request `GET` đối ứng để kiểm tra CSDL ngầm thực sự có bị biến đổi hay không, triệt tiêu báo động giả (Echo-only DTO) và phát hiện ghi đè âm thầm (Silent Persistence).
    - `core/auth_manager.py`: Tự động quản lý và refresh auth token khi gặp mã HTTP 401.
+   - `core/token_verifier.py`: Kiểm thử xác thực token JWT chuẩn RFC 7519 (`alg: none`, Stripped Signature, Expired Token - OWASP API2:2023).
+   - `core/callback_verifier.py`: Khởi động HTTP Listener in-memory nội bộ để bắt và xác minh lỗ hổng Blind SSRF Out-of-band với độ tin cậy 100% (Zero False Positive - OWASP API7:2023).
+   - `core/graphql_engine.py`: Adapter hỗ trợ phân tích cấu trúc GraphQL Introspection, trích xuất Schema context cho LLM và sinh query lồng sâu kiểm thử DoS (OWASP API4/API8:2023).
+   - `core/hmac_sealer.py`: Niêm phong báo cáo HTML bằng chữ ký số HMAC-SHA256 chống chỉnh sửa/giả mạo kết quả kiểm toán (Audit Integrity).
+   - `core/poc_exporter.py`: Tự động xuất Postman Collection v2.1.0 (`results/poc_collection.json`) chứa các request PoC giúp Developer click "Import & Send" tái hiện lỗi tức thì.
 6. **Module Phân tích Phản hồi (Enhanced Oracle & Feedback Loop)**:
    - `core/oracle.py`: Phán đoán đa tầng (Regex, Time-based Blind SQLi/ReDoS, OAST callbacks, BOLA differential).
    - `core/feedback_loop.py`: Tạo prompt phản hồi cho LLM cải thiện thế hệ payload tiếp theo.
@@ -92,6 +97,15 @@ python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --har 
 
 # Quét trực tiếp từ file HAR mà không cần file OpenAPI spec
 python fuzzer.py scan session.har -u http://localhost:5002 --concurrency 10
+
+# Kiểm thử xác thực JWT (RFC 7519 alg:none, signature strip, exp) & Blind SSRF Callback & Niêm phong HMAC
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --token "Bearer test-jwt-token" --verify-tokens --verify-callbacks --seal-report
+
+# Xác thực tính toàn vẹn của báo cáo đã niêm phong chống giả mạo
+python fuzzer.py verify results/findings_summary.html
+
+# Kiểm thử chuyên sâu GraphQL API (Introspection Disclosure & Query Depth DoS)
+python fuzzer.py scan http://localhost:5013/graphql -u http://localhost:5013 --graphql
 
 # Xử lý đặc tả lớn (Chunking / Batching) & So sánh Baseline Drift
 python fuzzer.py scan large_spec.json -u http://localhost:8000 --chunk-size 15 --baseline results/previous_findings.ndjson
