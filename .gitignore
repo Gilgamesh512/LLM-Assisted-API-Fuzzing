@@ -26,4 +26,6 @@ results/manifest.json
 results/cleanup_manifest.json
 results/payloads_*.json
 results/poc_collection.json
+results/remediations.*
+results/pr_comment.md
 

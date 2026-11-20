@@ -34,6 +34,11 @@ Toàn bộ hệ thống hoạt động như một thể thống nhất thông qu
    - `core/graphql_engine.py`: Adapter hỗ trợ phân tích cấu trúc GraphQL Introspection, trích xuất Schema context cho LLM và sinh query lồng sâu kiểm thử DoS (OWASP API4/API8:2023).
    - `core/hmac_sealer.py`: Niêm phong báo cáo HTML bằng chữ ký số HMAC-SHA256 chống chỉnh sửa/giả mạo kết quả kiểm toán (Audit Integrity).
    - `core/poc_exporter.py`: Tự động xuất Postman Collection v2.1.0 (`results/poc_collection.json`) chứa các request PoC giúp Developer click "Import & Send" tái hiện lỗi tức thì.
+   - `core/remediation.py`: Bộ sinh khuyến nghị vá lỗi tự động (AI Remediation & Patch Generator) kèm mã nguồn mẫu trước/sau (FastAPI, Express.js, Spring Boot) nhúng trực tiếp vào báo cáo HTML và xuất ra `remediations.md`.
+   - `core/hybrid_mutator.py`: Fuzzing lai siêu tốc (Smart Hybrid Fuzzing) nhân bản các hạt giống ngữ nghĩa từ LLM thành hàng ngàn payload biên/type confusion/format string (Zero Token Cost).
+   - `core/websocket_fuzzer.py`: Kiểm thử Real-time API (Handshake CSWSH, Broken WebSocket Authentication & Unauthenticated SSE Stream).
+   - `core/agent_fuzzer.py`: Tác tử Pentest Tự trị (Autonomous ReAct Pentest Agent) duy trì bộ nhớ ngữ cảnh để khai thác chuỗi logic nghiệp vụ đa bước (Multi-step Exploit Chaining & Fail-Open bypass).
+   - `core/pr_commenter.py`: Định dạng báo cáo Markdown chuẩn mực tích hợp GitHub Pull Request / GitLab MR kèm Security Gate Badge và lệnh cURL.
 6. **Module Phân tích Phản hồi (Enhanced Oracle & Feedback Loop)**:
    - `core/oracle.py`: Phán đoán đa tầng (Regex, Time-based Blind SQLi/ReDoS, OAST callbacks, BOLA differential).
    - `core/feedback_loop.py`: Tạo prompt phản hồi cho LLM cải thiện thế hệ payload tiếp theo.
@@ -109,4 +114,16 @@ python fuzzer.py scan http://localhost:5013/graphql -u http://localhost:5013 --g
 
 # Xử lý đặc tả lớn (Chunking / Batching) & So sánh Baseline Drift
 python fuzzer.py scan large_spec.json -u http://localhost:8000 --chunk-size 15 --baseline results/previous_findings.ndjson
+
+# Fuzzing lai siêu tốc (Smart Hybrid Fuzzing với bộ đột biến cục bộ không tốn token)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --hybrid --mutations-per-seed 5
+
+# Kích hoạt Tác tử Pentest Tự trị ReAct & Kiểm thử Real-time API (WebSocket / SSE)
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --agent --websocket
+
+# Tự động xuất kế hoạch vá lỗi (AI Remediation Patch) & Bình luận GitHub PR
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --remediation --remediation-framework fastapi --pr-comment
+
+# Tự động chuyển nhượng AI (Smart Resilient Failover): Hết token Cloud API tự động chuyển sang Ollama/Gemma local
+python fuzzer.py scan dataset/vampi_openapi.json -u http://localhost:5002 --provider gemini --fallback-provider local --fallback-model "gemma:7b"
 ```

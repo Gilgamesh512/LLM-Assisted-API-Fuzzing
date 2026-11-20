@@ -78,19 +78,86 @@ class LocalProvider(BaseProvider):
     default_model = "qwen2.5-coder"
     api_key_env = "LOCAL_LLM_API_KEY"
 
+    def __init__(self, model: str | None = None, base_url: str | None = None):
+        super().__init__(model=model)
+        self.base_url = base_url or os.environ.get("LOCAL_LLM_URL", "http://localhost:11434/v1")
+
     def resolve_api_key(self) -> str:
         # Local LLM không bắt buộc key bí mật, dùng dummy key nếu không có
         return os.environ.get(self.api_key_env, "ollama").strip() or "ollama"
 
     def generate(self, prompt: str, *, system_prompt: str | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
-        base_url = os.environ.get("LOCAL_LLM_URL", "http://localhost:11434/v1")
         return call_local(
             prompt,
             model=self.model,
-            base_url=base_url,
+            base_url=self.base_url,
             system_prompt=system_prompt,
             api_key=self.resolve_api_key(),
         )
+
+
+class ResilientProvider(BaseProvider):
+    """Provider bao bọc thông minh hỗ trợ tự động chuyển nhượng (Failover / Handover Chain).
+    
+    Khi provider chính (vd: Gemini, DeepSeek) gặp lỗi hết token (Quota 429),
+    thiếu API key hoặc rớt mạng, hệ thống sẽ tự động chuyển nhượng sang provider
+    dự phòng (Ollama / Gemma / Qwen hoặc Offline) để phiên quét không bị dừng.
+    """
+
+    def __init__(
+        self,
+        primary: BaseProvider,
+        fallbacks: list[BaseProvider] | None = None,
+        auto_fallback: bool = True,
+    ) -> None:
+        super().__init__(model=primary.model)
+        self.primary = primary
+        self.fallbacks = fallbacks or []
+        self.auto_fallback = auto_fallback
+        self.active_provider: BaseProvider = primary
+        self.name = primary.name
+
+    def generate(self, prompt: str, *, system_prompt: str | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        providers_to_try = [self.active_provider]
+        if self.auto_fallback:
+            for fb in self.fallbacks:
+                if fb != self.active_provider and fb not in providers_to_try:
+                    providers_to_try.append(fb)
+
+        last_exc: Exception | None = None
+        for idx, prov in enumerate(providers_to_try):
+            try:
+                res = prov.generate(prompt, system_prompt=system_prompt, context=context)
+                if prov != self.active_provider:
+                    print(f"\n      [✓] [CHUYỂN NHƯỢNG THÀNH CÔNG] Đã bàn giao tác vụ sang: '{prov.name}' (Model: {prov.model})")
+                    self.active_provider = prov
+                    self.name = prov.name
+                    self.model = prov.model
+                return res
+            except Exception as exc:
+                last_exc = exc
+                if idx < len(providers_to_try) - 1:
+                    next_p = providers_to_try[idx + 1]
+                    print(f"\n      [!] [CẢNH BÁO QUOTA/LỖI API] Provider '{prov.name}' gặp sự cố hoặc hết token: {exc}")
+                    print(f"      [*] Đang tự động chuyển giao (Failover) sang AI dự phòng: '{next_p.name}' (Model: {next_p.model})...")
+                else:
+                    raise last_exc
+        raise last_exc or RuntimeError("Tất cả providers trong chuỗi dự phòng đều thất bại.")
+
+    def repair(self, prompt: str, *, system_prompt: str | None = None, context: dict[str, Any] | None = None) -> dict[str, Any]:
+        try:
+            return self.active_provider.repair(prompt, system_prompt=system_prompt, context=context)
+        except Exception:
+            # Nếu repair trên active_provider gặp lỗi, dùng generate của chuỗi failover
+            return self.generate(prompt, system_prompt=system_prompt, context=context)
+
+    def metadata(self) -> dict[str, str]:
+        return {
+            "provider": self.active_provider.name,
+            "model": self.active_provider.model,
+            "primary": self.primary.name,
+            "failover_active": str(self.active_provider != self.primary),
+        }
 
 
 class OfflineProvider(BaseProvider):
@@ -152,6 +219,35 @@ def get_provider(provider_name: str, model: str | None = None) -> BaseProvider:
     return provider_cls(model=model)
 
 
+def get_resilient_provider(
+    primary_name: str,
+    primary_model: str | None = None,
+    fallback_name: str | None = None,
+    fallback_model: str | None = None,
+    local_url: str | None = None,
+    auto_fallback: bool = True,
+) -> BaseProvider:
+    """Tạo bộ Provider có khả năng tự phục hồi & tự động chuyển giao (Smart Resilient Provider)."""
+    primary = get_provider(primary_name, model=primary_model)
+    fallbacks: list[BaseProvider] = []
+
+    if fallback_name:
+        fn_low = fallback_name.lower().strip()
+        if fn_low in ("local", "ollama", "vllm"):
+            fallbacks.append(LocalProvider(model=fallback_model, base_url=local_url))
+        else:
+            fallbacks.append(get_provider(fallback_name, model=fallback_model))
+    elif auto_fallback and primary_name.lower() in ("gemini", "deepseek"):
+        # Mặc định: Nếu dùng Cloud API, chuẩn bị sẵn phương án dự phòng sang Local LLM (Ollama) và Offline
+        fallbacks.append(LocalProvider(model=fallback_model or "qwen2.5-coder", base_url=local_url))
+        fallbacks.append(OfflineProvider())
+
+    if not fallbacks:
+        return primary
+
+    return ResilientProvider(primary, fallbacks=fallbacks, auto_fallback=True)
+
+
 __all__ = [
     "LLMProvider",
     "BaseProvider",
@@ -159,6 +255,8 @@ __all__ = [
     "DeepSeekProvider",
     "LocalProvider",
     "OfflineProvider",
+    "ResilientProvider",
     "PROVIDERS",
     "get_provider",
+    "get_resilient_provider",
 ]

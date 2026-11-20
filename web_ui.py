@@ -143,6 +143,17 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
             verify_callbacks=bool(params.get("verify_callbacks", False)),
             seal_report=bool(params.get("seal_report", False)),
             graphql=bool(params.get("graphql", False)),
+            hybrid=bool(params.get("hybrid", False)),
+            mutations_per_seed=int(params.get("mutations_per_seed", 5)),
+            websocket=bool(params.get("websocket", False)),
+            agent=bool(params.get("agent", False)),
+            remediation=bool(params.get("remediation", True)),
+            remediation_framework=params.get("remediation_framework", "auto"),
+            pr_comment=bool(params.get("pr_comment", True)),
+            fallback_provider=params.get("fallback_provider") or None,
+            fallback_model=params.get("fallback_model") or None,
+            local_url=params.get("local_url") or None,
+            auto_fallback=bool(params.get("auto_fallback", True)),
         )
 
         # Đọc kết quả summary nếu có
@@ -566,6 +577,19 @@ INDEX_HTML = """<!DOCTYPE html>
                                 </select>
                             </div>
                             <div class="form-group">
+                                <label class="form-label">Dự phòng khi hết Token (Failover)</label>
+                                <select id="fallbackProvider" class="form-select">
+                                    <option value="">Tắt (Báo dừng nếu hết token)</option>
+                                    <option value="local" selected>Chuyển sang Local LLM / Ollama</option>
+                                    <option value="offline">Chuyển sang Offline Baseline</option>
+                                    <option value="deepseek">Chuyển sang DeepSeek</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">Model Local Dự Phòng (Tùy chọn)</label>
+                                <input type="text" id="fallbackModel" class="form-control" placeholder="vd: gemma:7b, qwen2.5-coder, llama3">
+                            </div>
+                            <div class="form-group">
                                 <label class="form-label">Ngưỡng Chặn (Security Gate)</label>
                                 <select id="failOn" class="form-select">
                                     <option value="high" selected>Chặn từ HIGH trở lên</option>
@@ -651,6 +675,26 @@ INDEX_HTML = """<!DOCTYPE html>
                         <div class="toggle-group">
                             <span class="toggle-label">GraphQL Security Audit (/graphql)</span>
                             <input type="checkbox" id="graphqlScan">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Smart Hybrid Fuzzing (Mutation không tốn Token)</span>
+                            <input type="checkbox" id="hybridFuzz">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Autonomous ReAct Pentest Agent (Tác tử đa bước)</span>
+                            <input type="checkbox" id="agentFuzz">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">Real-time API (WebSocket Handshake & SSE)</span>
+                            <input type="checkbox" id="websocketScan">
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">AI Remediation Plan (Sinh Code Patch vá lỗi)</span>
+                            <input type="checkbox" id="remediationPlan" checked>
+                        </div>
+                        <div class="toggle-group">
+                            <span class="toggle-label">CI/CD PR Commenter (Format Markdown GitHub/GitLab)</span>
+                            <input type="checkbox" id="prComment" checked>
                         </div>
                         <div class="toggle-group">
                             <span class="toggle-label">HMAC-SHA256 Report Sealing (Chống giả mạo)</span>
@@ -739,6 +783,12 @@ INDEX_HTML = """<!DOCTYPE html>
                             </a>
                             <a href="/artifacts/payloads_validated.json" download class="btn-action">
                                 Payloads JSON
+                            </a>
+                            <a href="/artifacts/remediations.md" download class="btn-action">
+                                💡 Kế hoạch Vá lỗi (.md)
+                            </a>
+                            <a href="/artifacts/pr_comment.md" download class="btn-action">
+                                📝 GitHub PR Comment
                             </a>
                         </div>
                         <div style="margin-top: 16px; border-bottom: 1px solid var(--border);"></div>
@@ -860,6 +910,8 @@ INDEX_HTML = """<!DOCTYPE html>
                 target_url: targetUrl || null,
                 target_name: targetName || null,
                 provider: document.getElementById("provider").value,
+                fallback_provider: document.getElementById("fallbackProvider") ? (document.getElementById("fallbackProvider").value || null) : null,
+                fallback_model: document.getElementById("fallbackModel") ? (document.getElementById("fallbackModel").value.trim() || null) : null,
                 fail_on: document.getElementById("failOn").value,
                 auth_token: document.getElementById("authToken").value.trim() || null,
                 concurrency: parseInt(document.getElementById("concurrency").value) || 5,
@@ -883,6 +935,11 @@ INDEX_HTML = """<!DOCTYPE html>
                 verify_tokens: document.getElementById("verifyTokens") ? document.getElementById("verifyTokens").checked : false,
                 verify_callbacks: document.getElementById("verifyCallbacks") ? document.getElementById("verifyCallbacks").checked : false,
                 graphql: document.getElementById("graphqlScan") ? document.getElementById("graphqlScan").checked : false,
+                hybrid: document.getElementById("hybridFuzz") ? document.getElementById("hybridFuzz").checked : false,
+                agent: document.getElementById("agentFuzz") ? document.getElementById("agentFuzz").checked : false,
+                websocket: document.getElementById("websocketScan") ? document.getElementById("websocketScan").checked : false,
+                remediation: document.getElementById("remediationPlan") ? document.getElementById("remediationPlan").checked : true,
+                pr_comment: document.getElementById("prComment") ? document.getElementById("prComment").checked : true,
                 seal_report: document.getElementById("sealReport") ? document.getElementById("sealReport").checked : false,
                 har_path: document.getElementById("harPath") ? (document.getElementById("harPath").value.trim() || null) : null,
             };

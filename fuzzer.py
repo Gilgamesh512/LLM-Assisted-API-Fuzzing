@@ -38,7 +38,7 @@ from core.oracle import (  # noqa: E402
     summarize_for_llm,
 )
 from core.prompt_builder import build_payload_generation_prompt, build_repair_prompt  # noqa: E402
-from core.providers import get_provider  # noqa: E402
+from core.providers import get_provider, get_resilient_provider  # noqa: E402
 from core.safety import (  # noqa: E402
     CircuitBreaker,
     CleanupTracker,
@@ -388,6 +388,20 @@ def run_full_scan(
     verify_callbacks: bool = False,
     seal_report: bool = False,
     graphql: bool = False,
+    hybrid: bool = False,
+    mutations_per_seed: int = 5,
+    websocket: bool = False,
+    agent: bool = False,
+    remediation: bool = False,
+    remediation_framework: str = "auto",
+    pr_comment: bool = False,
+    github_pr: int | None = None,
+    github_repo: str | None = None,
+    github_token: str | None = None,
+    fallback_provider: str | None = None,
+    fallback_model: str | None = None,
+    local_url: str | None = None,
+    auto_fallback: bool = True,
 ) -> int:
     """Chạy toàn bộ vòng đời Fuzzing."""
     if token_file and not auth_token:
@@ -535,8 +549,18 @@ def run_full_scan(
     else:
         print("[2/6] Bỏ qua Data Masking.")
 
-    # 3. Sinh Payload qua LLM Provider (Hỗ trợ Spec Chunking / Batching)
-    provider_inst = get_provider(provider, model=model)
+    # 3. Sinh Payload qua LLM Provider (Hỗ trợ Spec Chunking / Batching & Resilient Failover)
+    if fallback_provider:
+        provider_inst = get_resilient_provider(
+            provider,
+            primary_model=model,
+            fallback_name=fallback_provider,
+            fallback_model=fallback_model,
+            local_url=local_url,
+            auto_fallback=auto_fallback,
+        )
+    else:
+        provider_inst = get_provider(provider, model=model)
     effective_chunk = chunk_size if chunk_size > 0 else (15 if len(context_data) > 25 else len(context_data))
     chunks = [context_data[i : i + effective_chunk] for i in range(0, len(context_data), effective_chunk)]
 
@@ -628,6 +652,18 @@ def run_full_scan(
     canonical_file.write_text(json.dumps(payloads, ensure_ascii=False, indent=2), encoding="utf-8")
 
     fuzz_items = [convert_attack_payload_to_fuzz(p, target_app=derived_target_app) for p in payloads]
+
+    # Smart Hybrid Fuzzing: Đột biến hạt giống cục bộ tốc độ cao (Zero Token Cost)
+    if hybrid and fuzz_items:
+        try:
+            from core.hybrid_mutator import HybridMutator
+            mutator = HybridMutator()
+            orig_len = len(fuzz_items)
+            fuzz_items = mutator.expand_fuzz_payloads(fuzz_items, mutations_per_seed=mutations_per_seed)
+            print(f"      [Hybrid Fuzzing] Đã đột biến mở rộng tập payload từ {orig_len} lên {len(fuzz_items)} test cases (Zero Token Cost).")
+        except Exception as e:
+            print(f"      [!] Lỗi khi thực hiện Hybrid Mutation: {e}")
+
     fuzz_file.write_text(json.dumps({"payloads": fuzz_items}, ensure_ascii=False, indent=2), encoding="utf-8")
 
     # 6. Bắn Fuzzing thực tế (nếu có target_url và không bật dry_run)
@@ -1051,6 +1087,52 @@ def run_full_scan(
                     print("      [OK] Endpoint GraphQL an toàn (Introspection bị tắt và có giới hạn độ sâu).")
             except Exception as e:
                 print(f"      [!] Kiểm thử GraphQL gặp lỗi: {e}")
+
+        # Kiểm thử Real-time API (WebSocket & SSE) nếu có cờ --websocket / --ws
+        if websocket and base_url and not (abort_event and abort_event.is_set()):
+            print("-" * 65)
+            print("[*] BẬT KIỂM THỬ REAL-TIME API (WEBSOCKET HANDSHAKE, CSWSH & SSE STREAM)...")
+            try:
+                from core.websocket_fuzzer import audit_websocket_handshake, audit_sse_endpoint
+                ws_url = base_url.replace("http://", "ws://").replace("https://", "wss://")
+                ws_findings = audit_websocket_handshake(ws_url, headers=parsed_custom_headers, timeout=timeout)
+                if ws_findings:
+                    print(f"      [!] PHÁT HIỆN {len(ws_findings)} RỦI RO WEBSOCKET (CSWSH / BROKEN AUTH)!")
+                    findings.extend(ws_findings)
+                else:
+                    print("      [OK] WebSocket Handshake an toàn (Yêu cầu xác thực & kiểm soát Origin chặt chẽ).")
+
+                # Quét SSE nếu có endpoint stream
+                sse_targets = [f"{base_url}/events", f"{base_url}/stream", f"{base_url}/api/stream"]
+                for sse_u in sse_targets:
+                    sse_findings = audit_sse_endpoint(sse_u, headers=parsed_custom_headers, timeout=timeout, insecure=insecure)
+                    if sse_findings:
+                        print(f"      [!] PHÁT HIỆN RÒ RỈ DỮ LIỆU SSE STREAM TẠI {sse_u}!")
+                        findings.extend(sse_findings)
+                        break
+            except Exception as e:
+                print(f"      [!] Kiểm thử WebSocket/SSE gặp lỗi: {e}")
+
+        # Kích hoạt Tác tử Pentest Tự trị ReAct nếu có cờ --agent
+        if agent and base_url and not (abort_event and abort_event.is_set()):
+            print("-" * 65)
+            print("[*] KÍCH HOẠT TÁC TỬ PENTEST TỰ TRỊ (AUTONOMOUS REACT SECURITY AGENT)...")
+            try:
+                from core.agent_fuzzer import AutonomousPentestAgent
+                agent_inst = AutonomousPentestAgent(
+                    base_url=base_url,
+                    session=session,
+                    llm_provider=provider_inst,
+                    insecure=insecure,
+                )
+                agent_findings = agent_inst.run_multi_step_logic_campaign(endpoints, primary_token=auth_token)
+                if agent_findings:
+                    print(f"      [!] PHÁT HIỆN {len(agent_findings)} LỖ HỔNG LOGIC ĐA BƯỚC TỪ TÁC TỬ PENTEST!")
+                    findings.extend(agent_findings)
+                else:
+                    print("      [OK] Tác tử hoàn tất kiểm thử đa bước: Không phát hiện bypass quy trình nghiệp vụ.")
+            except Exception as e:
+                print(f"      [!] Tác tử Pentest gặp lỗi: {e}")
     else:
         print("[5/6] Bỏ qua Fuzzing runtime (chế độ Dry Run hoặc chưa cấu hình URL).")
         for p in payloads:
@@ -1217,6 +1299,40 @@ def run_full_scan(
     except Exception:
         pass
 
+    # Xuất Kế hoạch vá lỗi AI Remediation nếu có cờ --remediation hoặc có findings
+    rem_md_file = None
+    if remediation or findings:
+        try:
+            from core.remediation import generate_all_remediations, export_remediations_file
+            rems = generate_all_remediations(findings, framework=remediation_framework or "auto")
+            if rems:
+                _, rem_md_path = export_remediations_file(
+                    rems,
+                    out_json=out_path / "remediations.json",
+                    out_md=out_path / "remediations.md",
+                    target_name=derived_target_app,
+                )
+                output_files["Remediation Plan (MD)"] = "remediations.md"
+                output_files["Remediation Plan (JSON)"] = "remediations.json"
+                rem_md_file = rem_md_path
+        except Exception as e:
+            print(f"[-] Lỗi sinh kế hoạch vá lỗi: {e}")
+
+    # Xuất GitHub/GitLab PR Comment Markdown nếu có cờ --pr-comment
+    pr_comment_file = None
+    if pr_comment:
+        try:
+            from core.pr_commenter import format_github_pr_comment, export_pr_comment_file, post_github_pr_comment
+            pr_body = format_github_pr_comment(run_summary, findings, comp_matrix)
+            pr_comment_file = export_pr_comment_file(pr_body, out_path / "pr_comment.md")
+            output_files["GitHub PR Comment"] = "pr_comment.md"
+            if github_pr and github_repo:
+                print(f"[*] Đang tự động gửi bình luận lên GitHub PR #{github_pr} ({github_repo})...")
+                post_ok = post_github_pr_comment(pr_body, repo=github_repo, pr_number=github_pr, github_token=github_token)
+                print(f"    [{'+' if post_ok else '-'}] Gửi bình luận GitHub PR: {'Thành công' if post_ok else 'Thất bại'}")
+        except Exception as e:
+            print(f"[-] Lỗi xuất bình luận PR: {e}")
+
     # Gửi thông báo Webhook (Slack / Teams / Discord) nếu có
     if webhook_url:
         print(f"[*] Đang gửi thông báo kết quả tới Webhook: {webhook_url}...")
@@ -1231,6 +1347,10 @@ def run_full_scan(
         print(f" [+] JUnit XML Report   : {out_path / 'junit.xml'}")
     if poc_file:
         print(f" [+] Postman PoC Export : {poc_file}")
+    if rem_md_file:
+        print(f" [+] Remediation Plan   : {rem_md_file}")
+    if pr_comment_file:
+        print(f" [+] GitHub PR Comment  : {pr_comment_file}")
     print(f" [+] CSV Findings Report: {csv_file}")
     print(f" [+] NDJSON Findings    : {ndjson_file}")
     print(f" [+] Validated Payloads : {canonical_file}")
@@ -1295,6 +1415,20 @@ def main(argv: list[str] | None = None) -> int:
     scan_parser.add_argument("--verify-callbacks", action="store_true", help="Khởi động in-memory HTTP listener để xác minh Blind SSRF chủ động")
     scan_parser.add_argument("--seal-report", action="store_true", help="Niêm phong báo cáo HTML bằng chữ ký số HMAC-SHA256 chống giả mạo")
     scan_parser.add_argument("--graphql", action="store_true", help="Kích hoạt kiểm thử bảo mật chuyên sâu cho GraphQL API (Introspection & Query Depth DoS)")
+    scan_parser.add_argument("--hybrid", action="store_true", help="Kích hoạt Smart Hybrid Fuzzing (nhân bản seed bằng mutation engine cục bộ tốc độ cao)")
+    scan_parser.add_argument("--mutations-per-seed", type=int, default=5, help="Số lượng đột biến trên mỗi hạt giống trong Hybrid Fuzzing (mặc định: 5)")
+    scan_parser.add_argument("--websocket", "--ws", action="store_true", help="Kích hoạt kiểm thử Real-time API: WebSocket Handshake, CSWSH & SSE Stream")
+    scan_parser.add_argument("--agent", action="store_true", help="Kích hoạt Tác tử Pentest Tự trị ReAct (Autonomous Multi-Step Security Agent)")
+    scan_parser.add_argument("--remediation", action="store_true", help="Tự động xuất kế hoạch và mã nguồn vá lỗi AI Remediation (results/remediations.md)")
+    scan_parser.add_argument("--remediation-framework", choices=["fastapi", "express", "spring_boot", "auto"], default="auto", help="Framework lập trình ưu tiên cho code patch vá lỗi")
+    scan_parser.add_argument("--pr-comment", action="store_true", help="Xuất báo cáo định dạng Markdown cho GitHub/GitLab Pull Request (results/pr_comment.md)")
+    scan_parser.add_argument("--github-pr", type=int, help="Số hiệu GitHub Pull Request để tự động post bình luận")
+    scan_parser.add_argument("--github-repo", help="Tên GitHub Repository (vd: 'owner/repo')")
+    scan_parser.add_argument("--github-token", help="GitHub Personal Access Token để post PR comment")
+    scan_parser.add_argument("--fallback-provider", choices=["local", "ollama", "vllm", "offline", "mock", "deepseek", "gemini"], help="Provider dự phòng tự động chuyển giao khi provider chính hết token hoặc gặp lỗi")
+    scan_parser.add_argument("--fallback-model", help="Tên model của provider dự phòng (vd: gemma:7b, qwen2.5-coder, llama3)")
+    scan_parser.add_argument("--local-url", help="URL máy chủ Local LLM OpenAI-compatible (mặc định: http://localhost:11434/v1)")
+    scan_parser.add_argument("--no-fallback", action="store_true", help="Tắt tính năng tự động chuyển giao (Failover) sang model cục bộ")
 
     # Command: ui / web
     ui_parser = subparsers.add_parser("ui", aliases=["web"], help="Khởi động giao diện Web UI điều khiển trực quan")
@@ -1372,6 +1506,20 @@ def main(argv: list[str] | None = None) -> int:
             verify_callbacks=args.verify_callbacks,
             seal_report=args.seal_report,
             graphql=args.graphql,
+            hybrid=args.hybrid,
+            mutations_per_seed=args.mutations_per_seed,
+            websocket=args.websocket,
+            agent=args.agent,
+            remediation=args.remediation,
+            remediation_framework=args.remediation_framework,
+            pr_comment=args.pr_comment,
+            github_pr=args.github_pr,
+            github_repo=args.github_repo,
+            github_token=args.github_token,
+            fallback_provider=args.fallback_provider,
+            fallback_model=args.fallback_model,
+            local_url=args.local_url,
+            auto_fallback=not args.no_fallback,
         )
     else:
         parser.print_help()

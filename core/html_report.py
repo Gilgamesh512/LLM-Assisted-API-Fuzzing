@@ -18,6 +18,7 @@ from typing import Any
 
 from core.compliance import build_owasp_compliance_matrix, map_vulnerability_to_compliance
 from core.curl_builder import build_curl_command
+from core.remediation import generate_remediation
 
 
 def _escape(val: Any) -> str:
@@ -132,6 +133,7 @@ def generate_html_report(
         mapping = map_vulnerability_to_compliance(vuln_type)
         owasp_id = mapping["owasp_id"]
         primary_cwe = mapping["primary_cwe"]
+        rem_info = generate_remediation(f)
 
         curl_cmd = f.get("curl_command")
         if not curl_cmd:
@@ -243,6 +245,13 @@ def generate_html_report(
                             <span class="font-semibold text-indigo-700">{_escape(mapping['owasp_id'])} - {_escape(mapping['owasp_title'])}</span>
                             <span class="text-slate-500 font-mono text-xs ml-2">({_escape(', '.join(mapping['cwe_ids']))})</span>
                             <p class="text-slate-600 mt-1">{_escape(mapping['remediation'])}</p>
+                        </div>
+                    </div>
+                    <div class="mb-2">
+                        <strong class="text-slate-700 text-xs uppercase tracking-wider">💡 Mã nguồn vá lỗi đề xuất (AI Code Patch):</strong>
+                        <div style="background: #f8fafc; border: 1px solid var(--slate-200); border-radius: 6px; padding: 8px 12px; margin-top: 4px; font-size: 12px;">
+                            <span class="font-semibold text-emerald-700">{_escape(rem_info['title'])} ({_escape(rem_info['framework'].upper())})</span>
+                            <pre class="font-mono text-xs mt-2" style="background: #0f172a; color: #38bdf8; padding: 10px; border-radius: 4px; overflow-x: auto; white-space: pre-wrap;">{_escape(rem_info['remediation_code_patch'])}</pre>
                         </div>
                     </div>
                     {f'''
