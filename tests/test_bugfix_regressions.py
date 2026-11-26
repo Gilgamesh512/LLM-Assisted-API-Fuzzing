@@ -299,12 +299,22 @@ def test_concurrent_fuzzing_uses_distinct_thread_local_sessions(tmp_path: Path):
     mock_provider.model = "local-test"
     mock_provider.generate.return_value = {"reply": json.dumps(payloads)}
 
-    seen_session_ids: set[int] = set()
+    barrier = threading.Barrier(2)
+    entered = 0
+    seen_by_thread: dict[int, set[int]] = {}
+    all_session_ids: set[int] = set()
     lock = threading.Lock()
 
     def fake_request(self, method, url, **kwargs):
+        nonlocal entered
         with lock:
-            seen_session_ids.add(id(self))
+            entered += 1
+            my_idx = entered
+            tid = threading.get_ident()
+            seen_by_thread.setdefault(tid, set()).add(id(self))
+            all_session_ids.add(id(self))
+        if my_idx <= 2:
+            barrier.wait(timeout=3.0)
         resp = MagicMock()
         resp.status_code = 200
         resp.text = "ok"
@@ -322,4 +332,5 @@ def test_concurrent_fuzzing_uses_distinct_thread_local_sessions(tmp_path: Path):
         )
 
     assert code == 0
-    assert len(seen_session_ids) >= 2
+    assert len(seen_by_thread) >= 2
+    assert len(all_session_ids) == len(seen_by_thread)
