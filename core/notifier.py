@@ -28,7 +28,7 @@ def send_webhook_notification(
     if not webhook_url or not webhook_url.startswith("http"):
         return False
 
-    target_app = scan_summary.get("target_app", "API Target")
+    target_app = scan_summary.get("target_app") or scan_summary.get("target_name") or "API Target"
     target_url = scan_summary.get("target_url", "")
     total = scan_summary.get("total_findings", 0)
     critical = scan_summary.get("critical_count", 0)

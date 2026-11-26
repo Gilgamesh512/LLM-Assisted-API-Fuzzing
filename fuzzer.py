@@ -43,6 +43,7 @@ from core.safety import (  # noqa: E402
     CircuitBreaker,
     CleanupTracker,
     execute_auto_cleanup,
+    extract_created_identifier,
     filter_safe_payloads,
     get_audit_headers,
 )
@@ -237,6 +238,7 @@ def _send_fuzz_request(
     start_t = time.perf_counter()
     status_code = 0
     resp_text = ""
+    created_id: str | None = None
     attempt = 0
 
     while attempt <= max_retries:
@@ -271,6 +273,12 @@ def _send_fuzz_request(
                     )
                     status_code = resp.status_code
                     resp_text = resp.text[:1000]
+
+            if 200 <= status_code < 300 and method.upper() in ("POST", "PUT", "PATCH"):
+                try:
+                    created_id = extract_created_identifier(resp.json())
+                except Exception:
+                    created_id = None
 
             # Xử lý WAF & Rate Limit Auto-Throttle (HTTP 429 hoặc WAF 403)
             is_rate_limited = status_code == 429 or (
@@ -330,6 +338,7 @@ def _send_fuzz_request(
         "http_status": status_code,
         "response_time_ms": latency_ms,
         "confirmed": False,
+        "created_id": created_id,
         "evidence": f"HTTP {status_code}; Latency {latency_ms}ms; Response: {resp_text[:200]}",
         "reproduction_curl": curl_cmd,
         "reproduction": {
@@ -550,7 +559,8 @@ def run_full_scan(
         print("[2/6] Bỏ qua Data Masking.")
 
     # 3. Sinh Payload qua LLM Provider (Hỗ trợ Spec Chunking / Batching & Resilient Failover)
-    if fallback_provider:
+    primary_inst = get_provider(provider, model=model)
+    if fallback_provider or (auto_fallback and provider.lower() in ("gemini", "deepseek")):
         provider_inst = get_resilient_provider(
             provider,
             primary_model=model,
@@ -558,9 +568,10 @@ def run_full_scan(
             fallback_model=fallback_model,
             local_url=local_url,
             auto_fallback=auto_fallback,
+            primary_instance=primary_inst,
         )
     else:
-        provider_inst = get_provider(provider, model=model)
+        provider_inst = primary_inst
     effective_chunk = chunk_size if chunk_size > 0 else (15 if len(context_data) > 25 else len(context_data))
     chunks = [context_data[i : i + effective_chunk] for i in range(0, len(context_data), effective_chunk)]
 
@@ -668,6 +679,7 @@ def run_full_scan(
 
     # 6. Bắn Fuzzing thực tế (nếu có target_url và không bật dry_run)
     findings: list[dict[str, Any]] = []
+    cleanup_headers: dict[str, str] = dict(parsed_custom_headers)
     if target_url and not dry_run:
         import requests
         base_url = target_url.rstrip("/")
@@ -700,9 +712,41 @@ def run_full_scan(
             )
             session.headers.update(token_mgr.get_headers(session=session))
 
+        is_real_session = isinstance(requests.Session, type) and isinstance(session, requests.Session)
+        cleanup_headers.update(get_audit_headers(run_id))
+        if token_mgr:
+            cleanup_headers.update(token_mgr.get_headers(session=session))
+
         scope_guard = ScopeGuard(base_url, extra_allowed=allowed_hosts)
         rate_limiter = RateLimiter(delay_ms=delay_ms, max_rps=max_rps)
         circuit_breaker = CircuitBreaker(failure_threshold=5)
+
+        thread_local = threading.local()
+
+        def _worker_session() -> Any:
+            if not is_real_session:
+                return session
+            s = getattr(thread_local, "session", None)
+            if s is None:
+                s = requests.Session()
+                s.verify = session.verify
+                s.proxies.update(session.proxies)
+                s.headers.update(session.headers)
+                s.cookies.update(session.cookies)
+                thread_local.session = s
+            return s
+
+        def _send_on_worker(item_arg: dict[str, Any]) -> dict[str, Any]:
+            return _send_fuzz_request(
+                _worker_session(),
+                base_url,
+                item_arg,
+                timeout,
+                token_mgr,
+                scope_guard,
+                rate_limiter,
+                abort_event,
+            )
 
         gen_budget = max(1, generations)
         current_fuzz_items = fuzz_items
@@ -725,17 +769,7 @@ def run_full_scan(
                 print(f"      [*] Chạy đồng thời ({concurrency} workers)...")
                 with concurrent.futures.ThreadPoolExecutor(max_workers=concurrency) as executor:
                     future_map = {
-                        executor.submit(
-                            _send_fuzz_request,
-                            session,
-                            base_url,
-                            item,
-                            timeout,
-                            token_mgr,
-                            scope_guard,
-                            rate_limiter,
-                            abort_event,
-                        ): item
+                        executor.submit(_send_on_worker, item): item
                         for item in current_fuzz_items
                     }
                     for fut in concurrent.futures.as_completed(future_map):
@@ -777,6 +811,7 @@ def run_full_scan(
                         url=repro.get("url", ""),
                         path=gf.get("endpoint", ""),
                         status_code=st_code,
+                        identifier=gf.get("created_id"),
                         payload=repro.get("payload_value"),
                     )
 
@@ -1066,9 +1101,10 @@ def run_full_scan(
                         print("      [*] Gửi GraphQL Schema context cho LLM để sinh attack queries...")
                         gql_prompt = build_graphql_fuzz_prompt(summary)
                         gql_res = provider_inst.generate(gql_prompt)
-                        if gql_res and gql_res.text:
+                        gql_reply = gql_res.get("reply", "") if isinstance(gql_res, dict) else getattr(gql_res, "text", "")
+                        if gql_reply:
                             from core.validator import extract_json_from_text
-                            gql_payloads = extract_json_from_text(gql_res.text)
+                            gql_payloads = extract_json_from_text(str(gql_reply))
                             if isinstance(gql_payloads, list):
                                 runtime_gql_findings = execute_graphql_fuzz_probes(
                                     gql_url,
@@ -1081,8 +1117,8 @@ def run_full_scan(
                                 if runtime_gql_findings:
                                     print(f"      [!] PHÁT HIỆN {len(runtime_gql_findings)} LỖ HỔNG TỪ LLM GRAPHQL PROBES!")
                                     findings.extend(runtime_gql_findings)
-                    except Exception:
-                        pass
+                    except Exception as gql_exc:
+                        print(f"      [-] Lỗi khi sinh/thực thi GraphQL probes từ LLM: {gql_exc}")
                 elif not gql_findings:
                     print("      [OK] Endpoint GraphQL an toàn (Introspection bị tắt và có giới hạn độ sâu).")
             except Exception as e:
@@ -1233,7 +1269,7 @@ def run_full_scan(
     # Tự động thực thi dọn dẹp / rollback dữ liệu nếu có cờ --auto-cleanup
     if auto_cleanup:
         print("[*] Đang thực thi Auto-Cleanup dọn dẹp các tài nguyên vừa tạo trên server target...")
-        cleanup_res = execute_auto_cleanup(cleanup_file, headers=parsed_custom_headers, insecure=insecure)
+        cleanup_res = execute_auto_cleanup(cleanup_file, headers=cleanup_headers, insecure=insecure)
         print(f"    [+] Auto-Cleanup hoàn tất: Đã xóa {cleanup_res.get('cleaned_count', 0)}/{cleanup_res.get('total_mutations', 0)} tài nguyên test.")
 
     # Tính toán chỉ số tuân thủ OWASP API Top 10 (2023)
@@ -1244,6 +1280,7 @@ def run_full_scan(
     run_summary = {
         "run_id": run_id,
         "target_name": derived_target_app,
+        "target_app": derived_target_app,
         "target_url": target_url or "",
         "provider": provider,
         "model": model or provider_inst.model,
@@ -1259,43 +1296,13 @@ def run_full_scan(
     save_scan_run(run_summary, findings, db_path=out_path / "history.db")
     output_files["Audit History DB"] = "history.db"
 
-    html_content = generate_html_report(
-        findings,
-        target_name=derived_target_app,
-        target_url=target_url or "",
-        spec_source=str(spec_target),
-        provider=provider,
-        model=model or provider_inst.model,
-        run_id=run_id,
-        gate_status="PASS" if passed else "FAIL",
-        fail_on=fail_on,
-        output_files=output_files,
-        baseline_diff=diff,
-    )
-    if seal_report:
-        try:
-            from core.hmac_sealer import seal_html_report
-            html_content = seal_html_report(html_content)
-            print("[*] Đã niêm phong báo cáo HTML bằng chữ ký HMAC-SHA256 chống giả mạo.")
-        except Exception as e:
-            print(f"[-] Lỗi khi niêm phong báo cáo: {e}")
-    html_file.write_text(html_content, encoding="utf-8")
-    report_file.write_text(html_content, encoding="utf-8")
-
-    # Sinh mã băm SHA256 cho toàn bộ artifacts (Tamper-evident Audit)
-    import hashlib
-    checksum_lines: list[str] = []
-    for art_file in sorted(out_path.iterdir()):
-        if art_file.is_file() and art_file.name != "checksums.sha256":
-            sha = hashlib.sha256(art_file.read_bytes()).hexdigest()
-            checksum_lines.append(f"{sha}  {art_file.name}")
-    (out_path / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
-
     # Xuất Postman Collection PoC 1-Click Reproduce
     poc_file = None
     try:
         from core.poc_exporter import export_postman_poc_collection
         poc_file = export_postman_poc_collection(findings, target_name=derived_target_app, out_file=out_path / "poc_collection.json")
+        if poc_file:
+            output_files["Postman PoC Collection"] = poc_file.name
     except Exception:
         pass
 
@@ -1332,6 +1339,38 @@ def run_full_scan(
                 print(f"    [{'+' if post_ok else '-'}] Gửi bình luận GitHub PR: {'Thành công' if post_ok else 'Thất bại'}")
         except Exception as e:
             print(f"[-] Lỗi xuất bình luận PR: {e}")
+
+    html_content = generate_html_report(
+        findings,
+        target_name=derived_target_app,
+        target_url=target_url or "",
+        spec_source=str(spec_target),
+        provider=provider,
+        model=model or provider_inst.model,
+        run_id=run_id,
+        gate_status="PASS" if passed else "FAIL",
+        fail_on=fail_on,
+        output_files=output_files,
+        baseline_diff=diff,
+    )
+    if seal_report:
+        try:
+            from core.hmac_sealer import seal_html_report
+            html_content = seal_html_report(html_content)
+            print("[*] Đã niêm phong báo cáo HTML bằng chữ ký HMAC-SHA256 chống giả mạo.")
+        except Exception as e:
+            print(f"[-] Lỗi khi niêm phong báo cáo: {e}")
+    html_file.write_text(html_content, encoding="utf-8")
+    report_file.write_text(html_content, encoding="utf-8")
+
+    # Sinh mã băm SHA256 cho toàn bộ artifacts sau khi tất cả file đã được ghi (Tamper-evident Audit)
+    import hashlib
+    checksum_lines: list[str] = []
+    for art_file in sorted(out_path.iterdir()):
+        if art_file.is_file() and art_file.name != "checksums.sha256":
+            sha = hashlib.sha256(art_file.read_bytes()).hexdigest()
+            checksum_lines.append(f"{sha}  {art_file.name}")
+    (out_path / "checksums.sha256").write_text("\n".join(checksum_lines) + "\n", encoding="utf-8")
 
     # Gửi thông báo Webhook (Slack / Teams / Discord) nếu có
     if webhook_url:

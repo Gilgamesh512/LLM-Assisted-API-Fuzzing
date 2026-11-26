@@ -655,7 +655,12 @@ def analyze(spec: dict[str, Any], base_dir: Path | None = None) -> list[dict[str
                 _extract_parameters(operation_params_raw, spec, base_dir=base_dir),
             )
 
-            if "components" in spec:  # OpenAPI 3.x
+            is_openapi3 = (
+                str(spec.get("openapi", "")).startswith("3.")
+                or "components" in spec
+                or "requestBody" in operation
+            )
+            if is_openapi3:  # OpenAPI 3.x (kể cả spec không có mục components)
                 body_params, file_upload = _extract_request_body(operation, spec, base_dir=base_dir)
             else:  # Swagger 2.0
                 body_params, file_upload = _extract_swagger2_body_and_form(

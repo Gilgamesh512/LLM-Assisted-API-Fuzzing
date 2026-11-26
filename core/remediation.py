@@ -306,9 +306,15 @@ def _classify_vuln_category(vuln_type: str, evidence: str = "") -> str:
     v_low = vuln_type.lower()
     e_low = evidence.lower()
 
-    if "bola" in v_low or "idor" in v_low or "broken object" in v_low or "cwe-639" in v_low:
+    if "bola" in v_low or "idor" in v_low or "broken object level" in v_low or "cwe-639" in v_low:
         return "bola"
-    if "mass_assignment" in v_low or "parameter tampering" in v_low or "cwe-915" in v_low:
+    if (
+        "mass assignment" in v_low
+        or "mass_assignment" in v_low
+        or "parameter tampering" in v_low
+        or "property level" in v_low
+        or "cwe-915" in v_low
+    ):
         return "mass_assignment"
     if "sql" in v_low or "sqli" in v_low or "cwe-89" in v_low or "syntax error" in e_low:
         return "sqli"
@@ -327,7 +333,7 @@ def generate_remediation(
     llm_provider: Any = None,
 ) -> dict[str, Any]:
     """Sinh khuyến nghị khắc phục và mã nguồn vá lỗi (Patch) cho 1 finding cụ thể."""
-    vuln_type = str(finding.get("vuln_type", "Unknown Vulnerability"))
+    vuln_type = str(finding.get("vuln_type") or finding.get("vulnerability") or "Unknown Vulnerability")
     endpoint = str(finding.get("endpoint", "/"))
     param = str(finding.get("target_param") or finding.get("param") or "id")
     evidence = str(finding.get("evidence", ""))
@@ -408,6 +414,8 @@ def export_remediations_markdown(remediations: list[dict[str, Any]], target_name
 
     for idx, r in enumerate(remediations, 1):
         sev_badge = "🔴 CRITICAL" if r["severity"] == "critical" else ("🟠 HIGH" if r["severity"] == "high" else "🟡 MEDIUM")
+        fw = str(r.get("framework", "fastapi")).lower()
+        code_lang = "javascript" if fw == "express" else ("java" if fw == "spring_boot" else "python")
         lines.extend([
             f"## {idx}. [{sev_badge}] {r['vuln_type']} tại `{r['method']} {r['endpoint']}`",
             f"- **Tham số rủi ro:** `{r['target_param']}`",
@@ -415,12 +423,12 @@ def export_remediations_markdown(remediations: list[dict[str, Any]], target_name
             f"- **Chủ đề giải pháp:** {r['title']}",
             "",
             "### ❌ Mã nguồn dễ bị tấn công (Vulnerable Pattern):",
-            "```python",
+            f"```{code_lang}",
             r["vulnerable_code_snippet"],
             "```",
             "",
             "### ✅ Mã nguồn vá lỗi đề xuất (Remediated Code Patch):",
-            "```python",
+            f"```{code_lang}",
             r["remediation_code_patch"],
             "```",
             "",

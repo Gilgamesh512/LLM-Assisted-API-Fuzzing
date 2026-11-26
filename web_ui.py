@@ -156,15 +156,31 @@ def _background_scan_worker(params: dict[str, Any]) -> None:
             auto_fallback=bool(params.get("auto_fallback", True)),
         )
 
-        # Đọc kết quả summary nếu có
-        manifest_file = out_dir / "manifest.json"
+        # Đọc kết quả summary chính xác từ NDJSON (giữ nguyên critical/high/medium/low/info) hoặc fallback sang SARIF
         sarif_file = out_dir / "findings_summary.sarif"
+        ndjson_file = out_dir / "findings_summary.ndjson"
         html_file = out_dir / "report.html"
 
         counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
         findings_count = 0
 
-        if sarif_file.is_file():
+        if ndjson_file.is_file():
+            try:
+                for line in ndjson_file.read_text(encoding="utf-8").splitlines():
+                    if not line.strip():
+                        continue
+                    item = json.loads(line)
+                    findings_count += 1
+                    sev = str(item.get("severity", "info")).lower()
+                    if sev in counts:
+                        counts[sev] += 1
+                    else:
+                        counts["info"] += 1
+            except Exception:
+                findings_count = 0
+                counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+
+        if findings_count == 0 and sarif_file.is_file():
             try:
                 sarif_data = json.loads(sarif_file.read_text(encoding="utf-8"))
                 for run in sarif_data.get("runs", []):
@@ -587,7 +603,7 @@ INDEX_HTML = """<!DOCTYPE html>
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Model Local Dự Phòng (Tùy chọn)</label>
-                                <input type="text" id="fallbackModel" class="form-control" placeholder="vd: gemma:7b, qwen2.5-coder, llama3">
+                                <input type="text" id="fallbackModel" class="form-input" placeholder="vd: gemma:7b, qwen2.5-coder, llama3">
                             </div>
                             <div class="form-group">
                                 <label class="form-label">Ngưỡng Chặn (Security Gate)</label>

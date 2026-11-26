@@ -226,9 +226,10 @@ def get_resilient_provider(
     fallback_model: str | None = None,
     local_url: str | None = None,
     auto_fallback: bool = True,
+    primary_instance: BaseProvider | None = None,
 ) -> BaseProvider:
     """Tạo bộ Provider có khả năng tự phục hồi & tự động chuyển giao (Smart Resilient Provider)."""
-    primary = get_provider(primary_name, model=primary_model)
+    primary = primary_instance or get_provider(primary_name, model=primary_model)
     fallbacks: list[BaseProvider] = []
 
     if fallback_name:

@@ -247,6 +247,17 @@ def convert_fuzz_to_attack_payload(fuzz_data: dict[str, Any]) -> AttackPayload:
     )
 
 
+def extract_json_from_text(raw_text: str) -> Any:
+    """Trích xuất và parse JSON từ chuỗi text phản hồi của LLM. Trả về None nếu không hợp lệ."""
+    if not raw_text or not isinstance(raw_text, str):
+        return None
+    json_text = _extract_json_text(raw_text)
+    try:
+        return json.loads(json_text)
+    except json.JSONDecodeError:
+        return None
+
+
 __all__ = [
     "AttackPayload",
     "VulnerabilityType",
@@ -258,4 +269,5 @@ __all__ = [
     "payloads_to_jsonable",
     "convert_attack_payload_to_fuzz",
     "convert_fuzz_to_attack_payload",
+    "extract_json_from_text",
 ]

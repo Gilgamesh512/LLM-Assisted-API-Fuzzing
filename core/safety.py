@@ -184,6 +184,20 @@ class CircuitBreaker:
         return False
 
 
+def extract_created_identifier(resp_data: Any) -> str | None:
+    """Trích xuất ID/UUID của tài nguyên mới tạo từ JSON response để phục vụ Auto-Cleanup."""
+    if not isinstance(resp_data, dict):
+        return None
+    for key in ("id", "uuid", "_id", "user_id", "order_id", "account_id", "item_id"):
+        val = resp_data.get(key)
+        if val is not None and isinstance(val, (str, int)) and str(val).strip():
+            return str(val).strip()
+    nested = resp_data.get("data")
+    if isinstance(nested, dict):
+        return extract_created_identifier(nested)
+    return None
+
+
 def execute_auto_cleanup(
     manifest_path: Path | str,
     *,
@@ -216,7 +230,8 @@ def execute_auto_cleanup(
         clean_url = ""
 
         if method == "POST" and identifier:
-            clean_url = f"{url.rstrip('/')}/{identifier}"
+            base_clean = url.split("?", 1)[0].rstrip("/")
+            clean_url = f"{base_clean}/{identifier}"
         elif method == "POST" and not identifier:
             continue
 
@@ -254,5 +269,6 @@ __all__ = [
     "CleanupTracker",
     "MutatedResource",
     "CircuitBreaker",
+    "extract_created_identifier",
     "execute_auto_cleanup",
 ]
